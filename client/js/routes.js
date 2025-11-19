@@ -1,6 +1,6 @@
 export default {
   // ЭТО ПРОСТО ПРИМЕР НАПОЛНЕНИЯ КОНФИГА РУТОВ
-  "VersionManagement": {
+  "VersionManagement1": {
     "path": "/version-management",
     "component": "@/modules/version_management/client/ParentLayout.vue",
     "meta": {
