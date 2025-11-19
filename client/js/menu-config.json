@@ -2,7 +2,7 @@
   "menuSections": [
     {
       "icon": "Code",
-      "routeName": "VersionManagement1",
+      "routeName": "VersionManagement",
       "title": "Управление версиями"
     }
   ]
