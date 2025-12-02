@@ -1,0 +1,208 @@
+
+Это пример того, как выглядят эндпоинты.
+
+import os
+import git 
+import datetime 
+
+from django.conf import settings
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from django.http import FileResponse, Http404
+
+from .serializers import FileSystemEntrySerializer
+
+class RepositoryViewSet(viewsets.ViewSet):
+    # list - для получения списка всех репозиториев
+    def list(self, request):
+        repo_root = settings.VCS_REPOSITORIES_ROOT
+        repositories_on_disk = []
+
+        if os.path.exists(repo_root) and os.path.isdir(repo_root):
+            for entry_name in os.listdir(repo_root):
+                entry_path = os.path.join(repo_root, entry_name)
+                # Проверяем, является ли это директорией и Git-репозиторием
+                if os.path.isdir(entry_path) and os.path.exists(os.path.join(entry_path, '.git')):
+                    
+                    last_modified_timestamp = os.path.getmtime(entry_path)
+                    last_modified_datetime = datetime.datetime.fromtimestamp(last_modified_timestamp)
+                    formatted_datetime = last_modified_datetime.isoformat() 
+
+
+                    repositories_on_disk.append({
+                        "id": entry_name,
+                        "name": entry_name,
+                        "username": "local_user",
+                        "description": f"Repository '{entry_name}' from local disk.",
+                        "created_at": formatted_datetime, 
+                        "updated_at": formatted_datetime 
+                    })
+        
+        return Response(repositories_on_disk)
+
+    # retrieve - для получения информации о конкретном репозитории (по его имени)
+    def retrieve(self, request, pk=None):
+        repo_name = pk
+        repo_path = os.path.join(settings.VCS_REPOSITORIES_ROOT, repo_name)
+
+        if not os.path.isdir(repo_path) or not os.path.exists(os.path.join(repo_path, '.git')):
+            raise Http404(f"Репозиторий '{repo_name}' не найден или не является Git-репозиторием.")
+
+        # КОД ДЛЯ ДАТЫ 
+        last_modified_timestamp = os.path.getmtime(repo_path)
+        last_modified_datetime = datetime.datetime.fromtimestamp(last_modified_timestamp)
+        formatted_datetime = last_modified_datetime.isoformat()
+
+        repo_data = {
+            "id": repo_name,
+            "name": repo_name,
+            "username": "local_user",
+            "description": f"Repository '{repo_name}' from local disk.",
+            "created_at": formatted_datetime, 
+            "updated_at": formatted_datetime 
+        }
+        return Response(repo_data)
+
+    @action(detail=True, methods=['get'])
+    def files(self, request, pk=None): # pk будет именем репозитория
+        repo_name = pk
+        repo_path = os.path.join(settings.VCS_REPOSITORIES_ROOT, repo_name)
+
+        if not os.path.isdir(repo_path) or not os.path.exists(os.path.join(repo_path, '.git')):
+            raise Http404(f"Репозиторий '{repo_name}' не найден на файловой системе или не является Git-репозиторием.")
+
+        requested_path = request.query_params.get('path', '')
+        full_path = os.path.normpath(os.path.join(repo_path, requested_path))
+
+        # Защита от выхода за пределы репозитория
+        if not full_path.startswith(repo_path):
+            return Response({"detail": "Недопустимый путь."}, status=status.HTTP_400_BAD_REQUEST)
+
+        entries = []
+        if full_path != repo_path: # Если не в корне репозитория, добавляем ".."
+            parent_path = os.path.relpath(os.path.dirname(full_path), repo_path)
+            if parent_path == '.': # Если родитель - корень репозитория
+                parent_path = ''
+            entries.append({
+                "name": "..",
+                "is_directory": True,
+                "path": parent_path, # Путь к родительской папке для фронтенда
+                "type": "parent_directory",
+                "size": None
+            })
+
+        for entry_name in os.listdir(full_path):
+            entry_full_path = os.path.join(full_path, entry_name)
+            relative_path = os.path.relpath(entry_full_path, repo_path)
+            
+            is_dir = os.path.isdir(entry_full_path)
+            file_size = os.path.getsize(entry_full_path) if not is_dir else None
+
+            entries.append({
+                "name": entry_name,
+                "is_directory": is_dir,
+                "path": relative_path,
+                "type": "directory" if is_dir else "file",
+                "size": file_size
+            })
+
+        serializer = FileSystemEntrySerializer(entries, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['get'])
+    def download_file(self, request, pk=None): # pk будет именем репозитория
+        repo_name = pk
+        file_path_param = request.query_params.get('filepath')
+
+        if not file_path_param:
+            return Response({"detail": "Параметр 'filepath' обязателен."}, status=status.HTTP_400_BAD_REQUEST)
+
+        repo_absolute_path = os.path.join(settings.VCS_REPOSITORIES_ROOT, repo_name)
+        requested_file_path = os.path.normpath(os.path.join(repo_absolute_path, file_path_param))
+
+        # Проверка, что файл находится внутри репозитория
+        if not requested_file_path.startswith(repo_absolute_path):
+            return Response({"detail": "Недопустимый путь к файлу."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not os.path.exists(requested_file_path) or os.path.isdir(requested_file_path):
+            return Response({"detail": "Файл не найден или это директория."}, status=status.HTTP_404_NOT_FOUND)
+
+        response = FileResponse(open(requested_file_path, 'rb'), as_attachment=True, filename=os.path.basename(requested_file_path))
+        return response
+
+    @action(detail=True, methods=['get'])
+    def view_file_content(self, request, pk=None): # pk будет именем репозитория
+        repo_name = pk
+        file_path_param = request.query_params.get('filepath')
+
+        if not file_path_param:
+            return Response({"detail": "Параметр 'filepath' обязателен."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        repo_absolute_path = os.path.join(settings.VCS_REPOSITORIES_ROOT, repo_name)
+        requested_file_path = os.path.normpath(os.path.join(repo_absolute_path, file_path_param))
+
+        # Проверка, что файл находится внутри репозитория
+        if not requested_file_path.startswith(repo_absolute_path):
+            return Response({"detail": "Недопустимый путь к файлу."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not os.path.exists(requested_file_path) or os.path.isdir(requested_file_path):
+            return Response({"detail": "Файл не найден или это директория."}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            with open(requested_file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            return Response({"filename": os.path.basename(requested_file_path), "content": content})
+        except Exception as e:
+            return Response({"detail": f"Не удалось прочитать файл как текст: {e}"}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['get'])
+    def history(self, request, pk=None): # pk будет именем репозитория
+        repo_name = pk
+        repo_path = os.path.join(settings.VCS_REPOSITORIES_ROOT, repo_name)
+
+        if not os.path.isdir(repo_path) or not os.path.exists(os.path.join(repo_path, '.git')):
+            raise Http404(f"Репозиторий '{repo_name}' не найден на файловой системе или не является Git-репозиторием.")
+
+        try:
+            repo = git.Repo(repo_path)
+            commits = []
+            for commit in repo.iter_commits():
+                commits.append({
+                    "hash": commit.hexsha,
+                    "short_hash": repo.git.rev_parse(commit.hexsha, short=7),
+                    "author": commit.author.name,
+                    "email": commit.author.email,
+                    "date": commit.authored_datetime.isoformat(),
+                    "message": commit.message.strip()
+                })
+            return Response(commits)
+        except git.InvalidGitRepositoryError:
+            return Response({"detail": f"Папка '{repo_name}' не является валидным Git-репозиторием."}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"detail": f"Ошибка при получении истории коммитов: {e}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['get'])
+    def branches(self, request, pk=None): # pk будет именем репозитория
+        repo_name = pk
+        repo_path = os.path.join(settings.VCS_REPOSITORIES_ROOT, repo_name)
+
+        if not os.path.isdir(repo_path) or not os.path.exists(os.path.join(repo_path, '.git')):
+            raise Http404(f"Репозиторий '{repo_name}' не найден на файловой системе или не является Git-репозиторием.")
+
+        try:
+            repo = git.Repo(repo_path)
+            branches_list = []
+            head_commit = repo.head.commit.hexsha if repo.head.is_valid() else None
+
+            for branch in repo.branches:
+                branches_list.append({
+                    "name": branch.name,
+                    "commit_hash": branch.commit.hexsha,
+                    "is_active": branch.commit.hexsha == head_commit # Проверяем, является ли текущей активной веткой
+                })
+            return Response(branches_list)
+        except git.InvalidGitRepositoryError:
+            return Response({"detail": f"Папка '{repo_name}' не является валидным Git-репозиторием."}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"detail": f"Ошибка при получении списка веток: {e}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
