@@ -1,5 +1,5 @@
 from django.apps import AppConfig
-from django.conf import settings
+from api.src.config.settings import database
 
 
 class VersionManagementConfig(AppConfig):
@@ -18,11 +18,11 @@ class VersionManagementConfig(AppConfig):
         router_path = "modules.version_management.api.routers.AppLabelRouter"
         
         # Получаем текущий список роутеров
-        current_routers = getattr(settings, 'DATABASE_ROUTERS', [])
+        current_routers = getattr(database, 'DATABASE_ROUTERS', [])
         
         # Создаём новый список с добавленным роутером, если его ещё нет
         if router_path not in current_routers:
             new_routers = list(current_routers) if current_routers else []
             new_routers.append(router_path)
             # Устанавливаем обновлённый список роутеров
-            setattr(settings, 'DATABASE_ROUTERS', new_routers)
+            setattr(database, 'DATABASE_ROUTERS', new_routers)
