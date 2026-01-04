@@ -1,5 +1,242 @@
 #!/usr/bin/env bash
-# Логика работы с репозиториями: создание структуры, сохранение метаданных, импорт
+# Логика работы с репозиториями: создание структуры, сохранение метаданных, импорт, работа с API
+
+# ============================================================================
+# Функции для работы с API
+# ============================================================================
+
+# Получить базовый URL API
+get_api_base_url() {
+  # Приоритет: переменная окружения > конфиг файл > значение по умолчанию
+  if [[ -n "${API_BASE_URL:-}" ]]; then
+    echo "$API_BASE_URL"
+    return
+  fi
+  
+  # Проверяем конфиг файл в домашней директории
+  local config_file="$HOME/.ergovcs/config"
+  if [[ -f "$config_file" ]]; then
+    local api_url
+    api_url="$(grep -E "^api_base_url=" "$config_file" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'")"
+    if [[ -n "$api_url" ]]; then
+      echo "$api_url"
+      return
+    fi
+  fi
+  
+  # Проверяем переменные окружения для хоста и порта
+  local api_host="${API_HOST:-localhost}"
+  local api_port="${API_PORT:-8000}"
+  echo "http://${api_host}:${api_port}/api/version_management"
+}
+
+# Выполнить HTTP запрос к API
+api_request() {
+  # Параметры:
+  #   $1 - метод (GET, POST, PUT, DELETE)
+  #   $2 - endpoint (относительный путь)
+  #   $3 - тело запроса (опционально, для POST/PUT)
+  #   $4 - заголовки (опционально, формат: "Header1: Value1,Header2: Value2")
+  # Возвращает: JSON ответ от API (через stdout)
+  # В случае ошибки: выводит сообщение об ошибке в stderr и возвращает код ошибки
+  
+  local method="$1"
+  local endpoint="$2"
+  local body="${3:-}"
+  local headers="${4:-}"
+  
+  # Проверка наличия curl
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "[ERROR] curl не установлен. Установите curl для работы с API." >&2
+    return 1
+  fi
+  
+  local base_url
+  base_url="$(get_api_base_url)"
+  local url="${base_url}${endpoint}"
+  
+  # Подготовка команды curl
+  local curl_args=(
+    -s
+    -X "$method"
+    -H "Content-Type: application/json"
+    -H "Accept: application/json"
+  )
+  
+  # Добавление кастомных заголовков
+  if [[ -n "$headers" ]]; then
+    IFS=',' read -ra HEADER_ARRAY <<< "$headers"
+    for header in "${HEADER_ARRAY[@]}"; do
+      curl_args+=(-H "$header")
+    done
+  fi
+  
+  # Добавление тела запроса для POST/PUT
+  if [[ -n "$body" ]] && [[ "$method" == "POST" || "$method" == "PUT" ]]; then
+    curl_args+=(-d "$body")
+  fi
+  
+  # Выполнение запроса
+  local response
+  local http_code
+  local error_output
+  
+  # Выполняем запрос и получаем HTTP код
+  response="$(curl -s -w "\n%{http_code}" "${curl_args[@]}" "$url" 2>&1)"
+  http_code="$(echo "$response" | tail -n1)"
+  response="$(echo "$response" | sed '$d')"
+  
+  # Проверка HTTP кода
+  if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
+    # Успешный ответ
+    echo "$response"
+    return 0
+  else
+    # Ошибка HTTP
+    local error_msg
+    error_msg="$(echo "$response" | grep -o '"detail"[^}]*' | sed 's/"detail"://' | tr -d '"' | tr -d ',' || echo "HTTP $http_code")"
+    if [[ -z "$error_msg" ]]; then
+      error_msg="HTTP $http_code"
+    fi
+    echo "[ERROR] API запрос не удался: $error_msg" >&2
+    echo "$response" >&2
+    return 1
+  fi
+}
+
+# Создать репозиторий через API
+api_create_repository() {
+  # Параметры:
+  #   $1 - название репозитория (опционально)
+  # Возвращает: JSON с информацией о созданном репозитории (id, name, path, created_at)
+  
+  local name="${1:-}"
+  
+  local body="{}"
+  if [[ -n "$name" ]]; then
+    body="{\"name\": \"$name\"}"
+  fi
+  
+  api_request "POST" "/repositories/create/" "$body"
+}
+
+# Клонировать репозиторий через API
+api_clone_repository() {
+  # TODO: Реализовать клонирование через API
+  # Параметры:
+  #   $1 - UUID репозитория
+  # Возвращает: путь к клонированному репозиторию
+  
+  local uuid="$1"
+  echo "[TODO] Вызвать API /api/repositories/$uuid/clone/"
+  api_request "GET" "/repositories/$uuid/clone/"
+}
+
+# Создать коммит через API
+api_create_commit() {
+  # TODO: Реализовать создание коммита через API
+  # Параметры:
+  #   $1 - UUID репозитория
+  #   $2 - сообщение коммита
+  #   $3 - список измененных файлов (JSON)
+  # Возвращает: хеш коммита
+  
+  local uuid="$1"
+  local message="$2"
+  local files="${3:-}"
+  
+  local body
+  body="{\"message\": \"$message\""
+  if [[ -n "$files" ]]; then
+    body="$body, \"files\": $files"
+  fi
+  body="$body}"
+  
+  echo "[TODO] Вызвать API /api/repositories/$uuid/commits/create/"
+  api_request "POST" "/repositories/$uuid/commits/create/" "$body"
+}
+
+# Отправить изменения через API
+api_push_changes() {
+  # TODO: Реализовать отправку изменений через API
+  # Параметры:
+  #   $1 - UUID репозитория
+  #   $2 - название ветки
+  #   $3 - данные изменений (JSON или путь к файлу)
+  
+  local uuid="$1"
+  local branch="$2"
+  local changes="${3:-}"
+  
+  local body
+  body="{\"branch\": \"$branch\""
+  if [[ -n "$changes" ]]; then
+    body="$body, \"changes\": $changes"
+  fi
+  body="$body}"
+  
+  echo "[TODO] Вызвать API /api/repositories/$uuid/push/"
+  api_request "POST" "/repositories/$uuid/push/" "$body"
+}
+
+# Обновить локальный репозиторий через API
+api_update_repository() {
+  # TODO: Реализовать обновление через API
+  # Параметры:
+  #   $1 - UUID репозитория
+  #   $2 - название ветки
+  # Возвращает: путь к обновленным файлам или архив
+  
+  local uuid="$1"
+  local branch="$2"
+  
+  echo "[TODO] Вызвать API /api/repositories/$uuid/update/"
+  api_request "POST" "/repositories/$uuid/update/" "{\"branch\": \"$branch\"}"
+}
+
+# Получить список коммитов через API
+api_list_commits() {
+  # TODO: Реализовать получение списка коммитов через API
+  # Параметры:
+  #   $1 - UUID репозитория
+  # Возвращает: JSON со списком коммитов
+  
+  local uuid="$1"
+  echo "[TODO] Вызвать API /api/repositories/$uuid/commits/"
+  api_request "GET" "/repositories/$uuid/commits/"
+}
+
+# Получить информацию о коммите через API
+api_get_commit() {
+  # TODO: Реализовать получение информации о коммите через API
+  # Параметры:
+  #   $1 - UUID репозитория
+  #   $2 - хеш коммита
+  # Возвращает: JSON с метаданными коммита
+  
+  local uuid="$1"
+  local commit_hash="$2"
+  echo "[TODO] Вызвать API /api/repositories/$uuid/commits/$commit_hash/"
+  api_request "GET" "/repositories/$uuid/commits/$commit_hash/"
+}
+
+# Получить diff коммита через API
+api_get_commit_diff() {
+  # TODO: Реализовать получение diff коммита через API
+  # Параметры:
+  #   $1 - UUID репозитория
+  #   $2 - хеш коммита
+  # Возвращает: diff в формате unified diff
+  
+  local uuid="$1"
+  local commit_hash="$2"
+  echo "[TODO] Вызвать API /api/repositories/$uuid/commits/$commit_hash/diff/"
+  api_request "GET" "/repositories/$uuid/commits/$commit_hash/diff/"
+}
+
+# ============================================================================
+# Локальные функции работы с репозиториями
+# ============================================================================
 
 ensure_repo_dirs() {
   local uuid="$1"

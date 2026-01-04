@@ -34,6 +34,12 @@ $LibDir    = Join-Path $ScriptDir "lib"
 . (Join-Path $LibDir "help.ps1")
 
 switch ($Command.ToLower()) {
+  "clone"    { Invoke-Clone -Args $Args }
+  "add"      { Invoke-Add -Args $Args }
+  "commit"   { Invoke-Commit -Args $Args }
+  "push"     { Invoke-Push -Args $Args }
+  "update"   { Invoke-Update -Args $Args }
+  "remove"   { Invoke-Remove -Args $Args }
   "create"   { Invoke-Create -Args $Args }
   "download" { Invoke-Download -Args $Args }
   "help"     { Show-Help }

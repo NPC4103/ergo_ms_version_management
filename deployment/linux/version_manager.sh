@@ -22,6 +22,12 @@ main() {
   shift || true
 
   case "$command" in
+    clone)     cmd_clone "$@" ;;
+    add)       cmd_add "$@" ;;
+    commit)    cmd_commit "$@" ;;
+    push)      cmd_push "$@" ;;
+    update)    cmd_update "$@" ;;
+    remove)    cmd_remove "$@" ;;
     create)    cmd_create "$@" ;;
     download)  cmd_download "$@" ;;
     help|-h|--help) print_help ;;
