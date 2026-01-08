@@ -115,3 +115,149 @@ class RepositoryViewSet(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
  
+    def list(self, request):
+        """
+        Получить список всех репозиториев
+        GET /api/repositories/list/
+        """
+        return Response(
+            {"detail": "Список репозиториев"},
+            status=status.HTTP_200_OK,
+        )
+    def retrieve(self, request, pk=None):
+        """
+        Получить информацию о конкретном репозитории
+        GET /api/repositories/<id>/
+        """
+        return Response(
+            {"detail": "Информация о репозитории"},
+            status=status.HTTP_200_OK,
+        )
+    def update(self, request, pk=None):
+        """
+        Обновить информацию о конкретном репозитории
+        PUT /api/repositories/<id>/
+        """
+        return Response(
+            {"detail": "Информация о репозитории обновлена"},
+            status=status.HTTP_200_OK,
+        )
+    def delete(self, request, pk=None):
+        """
+        Удалить конкретный репозиторий
+        DELETE /api/repositories/<id>/
+        """
+        return Response(
+            {"detail": "Репозиторий удален"},
+            status=status.HTTP_200_OK,
+        )
+    def commit_create(self, request, pk=None):
+        """
+        Создать новый коммит
+        POST /api/repositories/<id>/commit/create/
+        """
+        return Response(
+            {"detail": "Коммит создан"},
+            status=status.HTTP_200_OK,
+        )
+    def commit_list(self, request, pk=None):
+        """
+        Получить список всех коммитов
+        GET /api/repositories/<id>/commit/list/
+        """
+        return Response(
+            {"detail": "Список коммитов"},
+            status=status.HTTP_200_OK,
+        )
+    def commit_retrieve(self, request, pk=None):
+        """
+        Получить информацию о конкретном коммите
+        GET /api/repositories/<id>/commit/<commit_hash>/
+        """
+        return Response(
+            {"detail": "Информация о коммите"},
+            status=status.HTTP_200_OK,
+        )
+    def commit_update(self, request, pk=None):
+        """
+        Обновить информацию о конкретном коммите
+        PUT /api/repositories/<id>/commit/<commit_hash>/
+        """
+        return Response(
+            {"detail": "Информация о коммите обновлена"},
+            status=status.HTTP_200_OK,
+        )
+    def commit_delete(self, request, pk=None):
+        """
+        Удалить конкретный коммит
+        DELETE /api/repositories/<id>/commit/<commit_hash>/
+        """
+        return Response(
+            {"detail": "Коммит удален"},
+            status=status.HTTP_200_OK,
+        )
+    def commit_diff(self, request, pk=None):
+        
+        """
+        Получить diff конкретного коммита
+        GET /api/repositories/<id>/commit/<commit_hash>/diff/
+        """
+        return Response(
+            {"detail": "Diff коммита"},
+            status=status.HTTP_200_OK,
+        )
+    def clone(self, request, pk=None):
+        """
+        Клонировать конкретный репозиторий
+        POST /api/repositories/<id>/clone/
+        """
+        return Response(
+            {"detail": "Репозиторий клонирован"},
+            status=status.HTTP_200_OK,
+        )
+    def push(self, request, pk=None):
+        """
+        Отправить изменения на сервер
+        POST /api/repositories/<id>/push/
+        """
+        return Response(
+            {"detail": "Изменения отправлены на сервер"},
+            status=status.HTTP_200_OK,
+        )
+
+    def create_branch(self, request, pk=None):
+        """
+        Создать новую ветку
+        POST /api/repositories/<id>/create-branch/
+        """
+        return Response(
+            {"detail": "Ветка создана"},
+            status=status.HTTP_200_OK,
+        )
+    def delete_branch(self, request, pk=None):
+        """
+        Удалить ветку
+        POST /api/repositories/<id>/delete-branch/
+        """
+        return Response(
+            {"detail": "Ветка удалена"},
+            status=status.HTTP_200_OK,
+        )
+    def list_branches(self, request, pk=None):
+        """
+        Получить список всех веток
+        GET /api/repositories/<id>/list-branches/
+        """
+        return Response(
+            {"detail": "Список веток"},
+            status=status.HTTP_200_OK,
+        )
+    def change_branch(self, request, pk=None):
+        """
+        Сменить ветку
+        POST /api/repositories/<id>/change-branch/
+        """
+        return Response(
+            {"detail": "Ветка сменена"},
+            status=status.HTTP_200_OK,
+        )
