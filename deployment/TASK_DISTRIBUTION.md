@@ -33,12 +33,12 @@
 **Использование:**
 ```bash
 # Linux
-api_request "GET" "/repositories/list/"
-api_request "POST" "/repositories/create/" '{"name": "My Repo"}'
+api_request "GET" "/repositories/"
+api_request "POST" "/repositories/" '{"name": "My Repo"}'
 
 # Windows
-Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/list/"
-Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/create/" -Body '{"name": "My Repo"}'
+Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/"
+Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/" -Body '{"name": "My Repo"}'
 ```
 
 **Конфигурация:**

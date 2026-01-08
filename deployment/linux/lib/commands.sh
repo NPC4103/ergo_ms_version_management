@@ -210,7 +210,7 @@ cmd_remove() {
 
 cmd_create() {
   # Создание репозитория через API
-  # Использует API эндпоинт /api/repositories/create/ для избежания дублирования функционала
+  # Использует API эндпоинт /api/repositories/ для избежания дублирования функционала
   # Примечание: API не поддерживает description, поэтому параметр --description игнорируется
   
   local name=""

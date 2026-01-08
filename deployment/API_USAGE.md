@@ -28,7 +28,7 @@ echo "$base_url"  # http://localhost:8000/api/version_management
 
 **Параметры:**
 - `$1` - метод (GET, POST, PUT, DELETE)
-- `$2` - endpoint (относительный путь, например `/repositories/list/`)
+- `$2` - endpoint (относительный путь, например `/repositories/`)
 - `$3` - тело запроса (опционально, для POST/PUT, JSON строка)
 - `$4` - заголовки (опционально, формат: `"Header1: Value1,Header2: Value2"`)
 
@@ -39,22 +39,22 @@ echo "$base_url"  # http://localhost:8000/api/version_management
 **Примеры:**
 ```bash
 # GET запрос
-response=$(api_request "GET" "/repositories/list/")
+response=$(api_request "GET" "/repositories/")
 echo "$response"
 
 # POST запрос с телом
 body='{"name": "My Repository"}'
-response=$(api_request "POST" "/repositories/create/" "$body")
+response=$(api_request "POST" "/repositories/" "$body")
 echo "$response"
 
 # POST запрос с кастомными заголовками
 headers="Authorization: Bearer token123"
-response=$(api_request "POST" "/repositories/create/" "$body" "$headers")
+response=$(api_request "POST" "/repositories/" "$body" "$headers")
 ```
 
 **Обработка ошибок:**
 ```bash
-if ! response=$(api_request "GET" "/repositories/list/"); then
+if ! response=$(api_request "GET" "/repositories/"); then
   echo "Ошибка при выполнении запроса"
   exit 1
 fi
@@ -93,24 +93,24 @@ Write-Host $baseUrl  # http://localhost:8000/api/version_management
 **Примеры:**
 ```powershell
 # GET запрос
-$response = Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/list/"
+$response = Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/"
 Write-Host $response
 
 # POST запрос с телом
 $body = '{"name": "My Repository"}'
-$response = Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/create/" -Body $body
+$response = Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/" -Body $body
 Write-Host $response
 
 # POST запрос с кастомными заголовками
 $headers = @{
     "Authorization" = "Bearer token123"
 }
-$response = Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/create/" -Body $body -Headers $headers
+$response = Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/" -Body $body -Headers $headers
 ```
 
 **Обработка ошибок:**
 ```powershell
-$response = Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/list/"
+$response = Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/"
 if (-not $response) {
     Write-Host "Ошибка при выполнении запроса"
     exit 1
@@ -251,12 +251,12 @@ Get-ApiBaseUrl
 
 **Linux:**
 ```bash
-api_request "GET" "/repositories/list/"
+api_request "GET" "/repositories/"
 ```
 
 **Windows:**
 ```powershell
-Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/list/"
+Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/"
 ```
 
 ---

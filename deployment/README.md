@@ -36,7 +36,7 @@
 ## Вспомогательные команды
 
 ### 7. **create** — создать новый репозиторий через API
-   - Вызывает API: `/api/repositories/create/`
+   - Вызывает API: `/api/repositories/`
    - Генерируется UUID на сервере
    - Создаются каталоги в `media/version_management/<UUID>/` на сервере
    - Создаются подпапки `api/` и `client/`

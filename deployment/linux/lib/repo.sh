@@ -117,7 +117,8 @@ api_create_repository() {
     body="{\"name\": \"$name\"}"
   fi
   
-  api_request "POST" "/repositories/create/" "$body"
+  # Стандартный create ViewSet в DRF доступен по POST /repositories/
+  api_request "POST" "/repositories/" "$body"
 }
 
 # Клонировать репозиторий через API

@@ -137,7 +137,8 @@ function Invoke-ApiCreateRepository {
   }
   $bodyJson = $body | ConvertTo-Json -Depth 2
   
-  Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/create/" -Body $bodyJson
+  # Стандартный create ViewSet в DRF доступен по POST /repositories/
+  Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/" -Body $bodyJson
 }
 
 # Клонировать репозиторий через API
