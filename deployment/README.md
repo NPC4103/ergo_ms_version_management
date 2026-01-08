@@ -52,36 +52,43 @@
 ### Linux
 
 ```bash
-# Сделать скрипт исполняемым
+# Один раз сделать обёртку исполняемой (если нужно)
+chmod +x ergovcs
 chmod +x linux/version_manager.sh
 
-# Основные команды
-./linux/version_manager.sh clone abc-123-def-456
-./linux/version_manager.sh add src/main.py
-./linux/version_manager.sh commit -m "Добавлен новый функционал"
-./linux/version_manager.sh push main
-./linux/version_manager.sh update main
-./linux/version_manager.sh remove abc-123-def-456
+# (опционально) добавить каталог утилиты в PATH
+export PATH="$PATH:/path/to/ergo_ms_core/modules/version_management/deployment"
+
+# Основные команды (через ergovcs)
+ergovcs clone abc-123-def-456
+ergovcs add src/main.py
+ergovcs commit -m "Добавлен новый функционал"
+ergovcs push main
+ergovcs update main
+ergovcs remove abc-123-def-456
 
 # Вспомогательные команды
-./linux/version_manager.sh create --name "Мой репозиторий" --description "Описание"
-./linux/version_manager.sh download --source /path/to/repo.zip --uuid <uuid>
+ergovcs create --name "Мой репозиторий"
+ergovcs download --source /path/to/repo.zip --uuid <uuid>
 ```
 
 ### Windows
 
 ```powershell
-# Основные команды
-pwsh -File windows/version_manager.ps1 clone abc-123-def-456
-pwsh -File windows/version_manager.ps1 add src\main.py
-pwsh -File windows/version_manager.ps1 commit -m "Добавлен новый функционал"
-pwsh -File windows/version_manager.ps1 push main
-pwsh -File windows/version_manager.ps1 update main
-pwsh -File windows/version_manager.ps1 remove abc-123-def-456
+# (опционально) добавить каталог утилиты в PATH для текущей сессии
+$env:PATH += ";C:\Users\marsh\Project\ergo_ms_core\modules\version_management\deployment"
+
+# Основные команды (через ergovcs)
+ergovcs clone abc-123-def-456
+ergovcs add src\main.py
+ergovcs commit -m "Добавлен новый функционал"
+ergovcs push main
+ergovcs update main
+ergovcs remove abc-123-def-456
 
 # Вспомогательные команды
-pwsh -File windows/version_manager.ps1 create --name "Мой репозиторий" --description "Описание"
-pwsh -File windows/version_manager.ps1 download --source "C:\path\to\repo.zip" --uuid <uuid>
+ergovcs create --name "Мой репозиторий"
+ergovcs download --source "C:\path\to\repo.zip" --uuid <uuid>
 ```
 
 ## Параметры команд
