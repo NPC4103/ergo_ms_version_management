@@ -76,7 +76,7 @@ ergovcs download --source /path/to/repo.zip --uuid <uuid>
 
 ```powershell
 # (опционально) добавить каталог утилиты в PATH для текущей сессии
-$env:PATH += ";C:\Users\marsh\Project\ergo_ms_core\modules\version_management\deployment"
+$env:PATH += ";C:\Users\user\Project\ergo_ms_core\modules\version_management\deployment"
 
 # Основные команды (через ergovcs)
 ergovcs clone abc-123-def-456
