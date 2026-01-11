@@ -1,5 +1,5 @@
 from django.apps import AppConfig
-from api.src.config.settings import database
+from src.config.settings import database
 
 
 class VersionManagementConfig(AppConfig):
