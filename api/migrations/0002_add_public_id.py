@@ -11,7 +11,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AlterField(
+        migrations.AddField(
             model_name='repository',
             name='public_id',
             field=models.UUIDField(blank=True, db_index=True, default=uuid.uuid4, editable=False, help_text='Публичный UUID для использования в API', null=True),

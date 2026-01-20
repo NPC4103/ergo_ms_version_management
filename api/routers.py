@@ -30,12 +30,11 @@ class AppLabelRouter:
             obj1._meta.app_label in self.route_app_labels or
             obj2._meta.app_label in self.route_app_labels
         ):
-        if db1 and db2:
             return True
         return None
-
+    
     def allow_migrate(self, db, app_label, model_name=None, **hints):
         if app_label in self.route_app_labels:
-            return db == target_db
+            return db == 'version_management'
         else:
-            return db != target_db
+            return db != 'version_management'
