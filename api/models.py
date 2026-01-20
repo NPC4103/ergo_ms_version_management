@@ -1,5 +1,5 @@
-# models.py
 from django.db import models
+import uuid
 from django.core.validators import MinLengthValidator
 from django.core.exceptions import ValidationError
 
@@ -8,6 +8,17 @@ class Repository(models.Model):
     """
     Репозиторий - контейнер для веток.
     """
+
+    public_id = models.UUIDField(
+        default=uuid.uuid4,
+        editable=False,  # Важно: нельзя редактировать через админку
+        unique=True,     # Должен быть уникальным
+        db_index=True,   # Для быстрого поиска
+        help_text="Публичный UUID для использования в API",
+        null=True,       # Разрешить NULL для существующих записей
+        blank=True       # Разрешить пустое значение в формах
+    )
+
     name = models.CharField(
         max_length=100,
         validators=[MinLengthValidator(1)],
@@ -21,8 +32,12 @@ class Repository(models.Model):
     class Meta:
         db_table = 'repositories'
         verbose_name_plural = 'Repositories'
-        app_label = 'version_management'  # Для AppLabelRouter
+        app_label = 'version_management'
         ordering = ['name']
+        indexes = [
+            models.Index(fields=['public_id']),
+            models.Index(fields=['created_at']),
+        ]
     
     def __str__(self):
         return str(self.name)
@@ -32,11 +47,14 @@ class Repository(models.Model):
         name = str(self.name).strip()
         if not name:
             raise ValidationError({'name': 'Название не может быть пустым'})
-        if name in ('.', '..'):
+        if name in ('.', '..', '/'):
             raise ValidationError({'name': 'Некорректное название'})
     
     def save(self, *args, **kwargs):
         """Сохранение с валидацией"""
+        # Автоматически генерируем public_id если он не установлен
+        if not self.public_id:
+            self.public_id = uuid.uuid4()
         self.clean()
         super().save(*args, **kwargs)
 
@@ -47,24 +65,24 @@ class Branch(models.Model):
     """
     repository = models.ForeignKey(
         Repository,
-        on_delete = models.CASCADE,
-        related_name ='branches'
+        on_delete=models.CASCADE,
+        related_name='branches'
     )
     name = models.CharField(
-        max_length = 255,
-        validators = [MinLengthValidator(1)],
-        help_text = "Имя ветки (например: main, develop, feature/x)"
+        max_length=255,
+        validators=[MinLengthValidator(1)],
+        help_text="Имя ветки (например: main, develop, feature/x)"
     )
     is_default = models.BooleanField(
-        default = False,
-        help_text = "Ветка по умолчанию для этого репозитория"
+        default=False,
+        help_text="Ветка по умолчанию для этого репозитория"
     )
     created_at = models.DateTimeField(auto_now_add=True)
     
     class Meta:
         db_table = 'branches'
         verbose_name_plural = 'Branches'
-        app_label = 'version_management'  # Для AppLabelRouter
+        app_label = 'version_management'
         ordering = ['repository', '-is_default', 'name']
         constraints = [
             models.UniqueConstraint(
@@ -99,7 +117,6 @@ class Branch(models.Model):
         if not name:
             raise ValidationError({'name': 'Имя ветки не может быть пустым'})
         
-        # Только самые важные ограничения
         if name in ('HEAD', 'ORIG_HEAD'):
             raise ValidationError({'name': 'Зарезервированное системой имя'})
         
@@ -107,25 +124,21 @@ class Branch(models.Model):
             raise ValidationError({'name': 'Нельзя использовать .. в имени'})
     
     def save(self, *args, **kwargs):
-        """Простой save для студенческого проекта"""
-        # Если это новая ветка и первая в репозитории
+        """Простой save для ветки"""
         if self.pk is None:
             if not Branch.objects.filter(repository_id=self.repository_id).exists():
                 self.is_default = True
         
-        # Базовая валидация
         self.clean()
         super().save(*args, **kwargs)
     
     @classmethod
     def set_default_branch(cls, branch):
         """Простая установка ветки по умолчанию (для API)"""
-        # Снимаем флаг у всех веток репозитория
         cls.objects.filter(
             repository_id=branch.repository_id,
             is_default=True
         ).update(is_default=False)
         
-        # Устанавливаем флаг выбранной ветке
         branch.is_default = True
         branch.save(update_fields=['is_default'])

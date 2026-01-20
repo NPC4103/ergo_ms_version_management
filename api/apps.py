@@ -1,7 +1,6 @@
 from django.apps import AppConfig
 from src.config.settings import database
 
-
 class VersionManagementConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'modules.version_management.api'
