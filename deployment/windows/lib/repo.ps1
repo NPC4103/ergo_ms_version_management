@@ -1,19 +1,19 @@
-﻿# Р›РѕРіРёРєР° СЂР°Р±РѕС‚С‹ СЃ СЂРµРїРѕР·РёС‚РѕСЂРёСЏРјРё: СЃРѕР·РґР°РЅРёРµ СЃС‚СЂСѓРєС‚СѓСЂС‹, СЃРѕС…СЂР°РЅРµРЅРёРµ РјРµС‚Р°РґР°РЅРЅС‹С…, РёРјРїРѕСЂС‚, СЂР°Р±РѕС‚Р° СЃ API
+﻿# Логика работы с репозиториями: создание структуры, сохранение метаданных, импорт, работа с API
 
 # ============================================================================
-# Р¤СѓРЅРєС†РёРё РґР»СЏ СЂР°Р±РѕС‚С‹ СЃ API
+# Функции для работы с API
 # ============================================================================
 
-# РџРѕР»СѓС‡РёС‚СЊ Р±Р°Р·РѕРІС‹Р№ URL API
+# Получить базовый URL API
 function Get-ApiBaseUrl {
-  # РџСЂРёРѕСЂРёС‚РµС‚: РїРµСЂРµРјРµРЅРЅР°СЏ РѕРєСЂСѓР¶РµРЅРёСЏ > РєРѕРЅС„РёРі С„Р°Р№Р» > Р·РЅР°С‡РµРЅРёРµ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
+  # Приоритет: переменная окружения > конфиг файл > значение по умолчанию
   
-  # РџСЂРѕРІРµСЂСЏРµРј РїРµСЂРµРјРµРЅРЅСѓСЋ РѕРєСЂСѓР¶РµРЅРёСЏ
+  # Проверяем переменную окружения
   if ($env:API_BASE_URL) {
     return $env:API_BASE_URL
   }
   
-  # РџСЂРѕРІРµСЂСЏРµРј РєРѕРЅС„РёРі С„Р°Р№Р» РІ РґРѕРјР°С€РЅРµР№ РґРёСЂРµРєС‚РѕСЂРёРё
+  # Проверяем конфиг файл в домашней директории
   $configFile = Join-Path $env:USERPROFILE ".ergovcs\config"
   if (Test-Path $configFile) {
     $configContent = Get-Content $configFile -Raw
@@ -25,14 +25,14 @@ function Get-ApiBaseUrl {
     }
   }
   
-  # РСЃРїРѕР»СЊР·СѓРµРј РїРµСЂРµРјРµРЅРЅС‹Рµ РѕРєСЂСѓР¶РµРЅРёСЏ РґР»СЏ С…РѕСЃС‚Р° Рё РїРѕСЂС‚Р° РёР»Рё Р·РЅР°С‡РµРЅРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
+  # Используем переменные окружения для хоста и порта или значения по умолчанию
   $apiHost = if ($env:API_HOST) { $env:API_HOST } else { "localhost" }
   $apiPort = if ($env:API_PORT) { $env:API_PORT } else { "8000" }
   
   return "http://${apiHost}:${apiPort}/api/version_management"
 }
 
-# Р’С‹РїРѕР»РЅРёС‚СЊ HTTP Р·Р°РїСЂРѕСЃ Рє API
+# Выполнить HTTP запрос к API
 function Invoke-ApiRequest {
   param(
     [Parameter(Mandatory=$true)]
@@ -47,23 +47,23 @@ function Invoke-ApiRequest {
     [hashtable]$Headers = @{}
   )
   
-  # РџРѕР»СѓС‡Р°РµРј Р±Р°Р·РѕРІС‹Р№ URL
+  # Получаем базовый URL
   $baseUrl = Get-ApiBaseUrl
   $url = "$baseUrl$Endpoint"
   
-  # РџРѕРґРіРѕС‚РѕРІРєР° Р·Р°РіРѕР»РѕРІРєРѕРІ
+  # Подготовка заголовков
   $requestHeaders = @{
     "Content-Type" = "application/json"
     "Accept" = "application/json"
   }
   
-  # Р”РѕР±Р°РІР»СЏРµРј РєР°СЃС‚РѕРјРЅС‹Рµ Р·Р°РіРѕР»РѕРІРєРё
+  # Добавляем кастомные заголовки
   foreach ($key in $Headers.Keys) {
     $requestHeaders[$key] = $Headers[$key]
   }
   
   try {
-    # РџРѕРґРіРѕС‚РѕРІРєР° РїР°СЂР°РјРµС‚СЂРѕРІ РґР»СЏ Invoke-RestMethod
+    # Подготовка параметров для Invoke-RestMethod
     $params = @{
       Uri = $url
       Method = $Method
@@ -71,15 +71,15 @@ function Invoke-ApiRequest {
       ErrorAction = "Stop"
     }
     
-    # Р”РѕР±Р°РІР»СЏРµРј С‚РµР»Рѕ Р·Р°РїСЂРѕСЃР° РґР»СЏ POST/PUT/PATCH
+    # Добавляем тело запроса для POST/PUT/PATCH
     if ($Body -and ($Method -eq "POST" -or $Method -eq "PUT" -or $Method -eq "PATCH")) {
       $params["Body"] = $Body
     }
     
-    # Р’С‹РїРѕР»РЅРµРЅРёРµ Р·Р°РїСЂРѕСЃР°
+    # Выполнение запроса
     $response = Invoke-RestMethod @params
     
-    # Р’РѕР·РІСЂР°С‰Р°РµРј РѕС‚РІРµС‚ (РјРѕР¶РµС‚ Р±С‹С‚СЊ РѕР±СЉРµРєС‚ РёР»Рё СЃС‚СЂРѕРєР°)
+    # Возвращаем ответ (может быть объект или строка)
     if ($response -is [string]) {
       return $response
     } else {
@@ -87,18 +87,19 @@ function Invoke-ApiRequest {
     }
   }
   catch {
-    # РћР±СЂР°Р±РѕС‚РєР° РѕС€РёР±РѕРє
-    $statusCode = $_.Exception.Response.StatusCode.value__
+    # Обработка ошибок
+    $statusCode = $null
     $errorMessage = $_.Exception.Message
     
-    # РџС‹С‚Р°РµРјСЃСЏ РёР·РІР»РµС‡СЊ РґРµС‚Р°Р»Рё РѕС€РёР±РєРё РёР· РѕС‚РІРµС‚Р°
+    # Пытаемся извлечь детали ошибки из ответа
     if ($_.Exception.Response) {
       try {
+        $statusCode = $_.Exception.Response.StatusCode.value__
         $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
         $responseBody = $reader.ReadToEnd()
         $reader.Close()
         
-        # РџС‹С‚Р°РµРјСЃСЏ СЂР°СЃРїР°СЂСЃРёС‚СЊ JSON СЃ РѕС€РёР±РєРѕР№
+        # Пытаемся распарсить JSON с ошибкой
         $errorObj = $responseBody | ConvertFrom-Json -ErrorAction SilentlyContinue
         if ($errorObj -and $errorObj.detail) {
           $errorMessage = $errorObj.detail
@@ -107,29 +108,29 @@ function Invoke-ApiRequest {
         }
       }
       catch {
-        # Р•СЃР»Рё РЅРµ СѓРґР°Р»РѕСЃСЊ СЂР°СЃРїР°СЂСЃРёС‚СЊ, РёСЃРїРѕР»СЊР·СѓРµРј СЃС‚Р°РЅРґР°СЂС‚РЅРѕРµ СЃРѕРѕР±С‰РµРЅРёРµ
+        # Если не удалось распарсить, используем стандартное сообщение
       }
     }
     
-    Write-Host "[ERROR] API Р·Р°РїСЂРѕСЃ РЅРµ СѓРґР°Р»СЃСЏ: $errorMessage" -ForegroundColor Red
+    Write-Host "[ERROR] API запрос не удался: $errorMessage" -ForegroundColor Red
     Write-Host "  URL: $url" -ForegroundColor Yellow
-    Write-Host "  РњРµС‚РѕРґ: $Method" -ForegroundColor Yellow
+    Write-Host "  Метод: $Method" -ForegroundColor Yellow
     if ($statusCode) {
-      Write-Host "  HTTP РєРѕРґ: $statusCode" -ForegroundColor Yellow
+      Write-Host "  HTTP код: $statusCode" -ForegroundColor Yellow
     }
     
-    # Р’РѕР·РІСЂР°С‰Р°РµРј РєРѕРґ РѕС€РёР±РєРё
+    # Возвращаем код ошибки
     return $null
   }
 }
 
-# РЎРѕР·РґР°С‚СЊ СЂРµРїРѕР·РёС‚РѕСЂРёР№ С‡РµСЂРµР· API
+# Создать репозиторий через API
 function Invoke-ApiCreateRepository {
   param([string]$Name = $null)
   
-  # РџР°СЂР°РјРµС‚СЂС‹:
-  #   $Name - РЅР°Р·РІР°РЅРёРµ СЂРµРїРѕР·РёС‚РѕСЂРёСЏ (РѕРїС†РёРѕРЅР°Р»СЊРЅРѕ)
-  # Р’РѕР·РІСЂР°С‰Р°РµС‚: JSON СЃ РёРЅС„РѕСЂРјР°С†РёРµР№ Рѕ СЃРѕР·РґР°РЅРЅРѕРј СЂРµРїРѕР·РёС‚РѕСЂРёРё (id, name, path, created_at)
+  # Параметры:
+  #   $Name - название репозитория (опционально)
+  # Возвращает: JSON с информацией о созданном репозитории (id, name, path, created_at)
   
   $body = @{}
   if ($Name) {
@@ -137,22 +138,22 @@ function Invoke-ApiCreateRepository {
   }
   $bodyJson = $body | ConvertTo-Json -Depth 2
   
-  # РЎС‚Р°РЅРґР°СЂС‚РЅС‹Р№ create ViewSet РІ DRF РґРѕСЃС‚СѓРїРµРЅ РїРѕ POST /repositories/
+  # Стандартный create ViewSet в DRF доступен по POST /repositories/
   Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/" -Body $bodyJson
 }
 
-# РљР»РѕРЅРёСЂРѕРІР°С‚СЊ СЂРµРїРѕР·РёС‚РѕСЂРёР№ С‡РµСЂРµР· API
+# Клонировать репозиторий через API
 function Invoke-ApiCloneRepository {
   param([string]$Uuid)
   
-  # TODO: Р РµР°Р»РёР·РѕРІР°С‚СЊ РєР»РѕРЅРёСЂРѕРІР°РЅРёРµ С‡РµСЂРµР· API
-  # Р’РѕР·РІСЂР°С‰Р°РµС‚: РїСѓС‚СЊ Рє РєР»РѕРЅРёСЂРѕРІР°РЅРЅРѕРјСѓ СЂРµРїРѕР·РёС‚РѕСЂРёСЋ
+  # TODO: Реализовать клонирование через API
+  # Возвращает: путь к клонированному репозиторию
   
-  Write-Host "[TODO] Р’С‹Р·РІР°С‚СЊ API /api/repositories/$Uuid/clone/" -ForegroundColor Yellow
+  Write-Host "[TODO] Вызвать API /api/repositories/$Uuid/clone/" -ForegroundColor Yellow
   Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/$Uuid/clone/"
 }
 
-# РЎРѕР·РґР°С‚СЊ РєРѕРјРјРёС‚ С‡РµСЂРµР· API
+# Создать коммит через API
 function Invoke-ApiCreateCommit {
   param(
     [string]$Uuid,
@@ -160,8 +161,8 @@ function Invoke-ApiCreateCommit {
     [string]$Files = $null
   )
   
-  # TODO: Р РµР°Р»РёР·РѕРІР°С‚СЊ СЃРѕР·РґР°РЅРёРµ РєРѕРјРјРёС‚Р° С‡РµСЂРµР· API
-  # Р’РѕР·РІСЂР°С‰Р°РµС‚: С…РµС€ РєРѕРјРјРёС‚Р°
+  # TODO: Реализовать создание коммита через API
+  # Возвращает: хеш коммита
   
   $body = @{
     message = $Message
@@ -173,11 +174,11 @@ function Invoke-ApiCreateCommit {
     $body = $bodyObj | ConvertTo-Json -Depth 2
   }
   
-  Write-Host "[TODO] Р’С‹Р·РІР°С‚СЊ API /api/repositories/$Uuid/commits/create/" -ForegroundColor Yellow
+  Write-Host "[TODO] Вызвать API /api/repositories/$Uuid/commits/create/" -ForegroundColor Yellow
   Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/$Uuid/commits/create/" -Body $body
 }
 
-# РћС‚РїСЂР°РІРёС‚СЊ РёР·РјРµРЅРµРЅРёСЏ С‡РµСЂРµР· API
+# Отправить изменения через API
 function Invoke-ApiPushChanges {
   param(
     [string]$Uuid,
@@ -185,7 +186,7 @@ function Invoke-ApiPushChanges {
     [string]$Changes = $null
   )
   
-  # TODO: Р РµР°Р»РёР·РѕРІР°С‚СЊ РѕС‚РїСЂР°РІРєСѓ РёР·РјРµРЅРµРЅРёР№ С‡РµСЂРµР· API
+  # TODO: Реализовать отправку изменений через API
   
   $body = @{
     branch = $Branch
@@ -197,69 +198,69 @@ function Invoke-ApiPushChanges {
     $body = $bodyObj | ConvertTo-Json -Depth 2
   }
   
-  Write-Host "[TODO] Р’С‹Р·РІР°С‚СЊ API /api/repositories/$Uuid/push/" -ForegroundColor Yellow
+  Write-Host "[TODO] Вызвать API /api/repositories/$Uuid/push/" -ForegroundColor Yellow
   Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/$Uuid/push/" -Body $body
 }
 
-# РћР±РЅРѕРІРёС‚СЊ Р»РѕРєР°Р»СЊРЅС‹Р№ СЂРµРїРѕР·РёС‚РѕСЂРёР№ С‡РµСЂРµР· API
+# Обновить локальный репозиторий через API
 function Invoke-ApiUpdateRepository {
   param(
     [string]$Uuid,
     [string]$Branch
   )
   
-  # TODO: Р РµР°Р»РёР·РѕРІР°С‚СЊ РѕР±РЅРѕРІР»РµРЅРёРµ С‡РµСЂРµР· API
-  # Р’РѕР·РІСЂР°С‰Р°РµС‚: РїСѓС‚СЊ Рє РѕР±РЅРѕРІР»РµРЅРЅС‹Рј С„Р°Р№Р»Р°Рј РёР»Рё Р°СЂС…РёРІ
+  # TODO: Реализовать обновление через API
+  # Возвращает: путь к обновлённым файлам или архив
   
   $body = @{
     branch = $Branch
   } | ConvertTo-Json -Depth 2
   
-  Write-Host "[TODO] Р’С‹Р·РІР°С‚СЊ API /api/repositories/$Uuid/update/" -ForegroundColor Yellow
+  Write-Host "[TODO] Вызвать API /api/repositories/$Uuid/update/" -ForegroundColor Yellow
   Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/$Uuid/update/" -Body $body
 }
 
-# РџРѕР»СѓС‡РёС‚СЊ СЃРїРёСЃРѕРє РєРѕРјРјРёС‚РѕРІ С‡РµСЂРµР· API
+# Получить список коммитов через API
 function Get-ApiCommitsList {
   param([string]$Uuid)
   
-  # TODO: Р РµР°Р»РёР·РѕРІР°С‚СЊ РїРѕР»СѓС‡РµРЅРёРµ СЃРїРёСЃРєР° РєРѕРјРјРёС‚РѕРІ С‡РµСЂРµР· API
-  # Р’РѕР·РІСЂР°С‰Р°РµС‚: JSON СЃРѕ СЃРїРёСЃРєРѕРј РєРѕРјРјРёС‚РѕРІ
+  # TODO: Реализовать получение списка коммитов через API
+  # Возвращает: JSON со списком коммитов
   
-  Write-Host "[TODO] Р’С‹Р·РІР°С‚СЊ API /api/repositories/$Uuid/commits/" -ForegroundColor Yellow
+  Write-Host "[TODO] Вызвать API /api/repositories/$Uuid/commits/" -ForegroundColor Yellow
   Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/$Uuid/commits/"
 }
 
-# РџРѕР»СѓС‡РёС‚СЊ РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ РєРѕРјРјРёС‚Рµ С‡РµСЂРµР· API
+# Получить информацию о коммите через API
 function Get-ApiCommit {
   param(
     [string]$Uuid,
     [string]$CommitHash
   )
   
-  # TODO: Р РµР°Р»РёР·РѕРІР°С‚СЊ РїРѕР»СѓС‡РµРЅРёРµ РёРЅС„РѕСЂРјР°С†РёРё Рѕ РєРѕРјРјРёС‚Рµ С‡РµСЂРµР· API
-  # Р’РѕР·РІСЂР°С‰Р°РµС‚: JSON СЃ РјРµС‚Р°РґР°РЅРЅС‹РјРё РєРѕРјРјРёС‚Р°
+  # TODO: Реализовать получение информации о коммите через API
+  # Возвращает: JSON с метаданными коммита
   
-  Write-Host "[TODO] Р’С‹Р·РІР°С‚СЊ API /api/repositories/$Uuid/commits/$CommitHash/" -ForegroundColor Yellow
+  Write-Host "[TODO] Вызвать API /api/repositories/$Uuid/commits/$CommitHash/" -ForegroundColor Yellow
   Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/$Uuid/commits/$CommitHash/"
 }
 
-# РџРѕР»СѓС‡РёС‚СЊ diff РєРѕРјРјРёС‚Р° С‡РµСЂРµР· API
+# Получить diff коммита через API
 function Get-ApiCommitDiff {
   param(
     [string]$Uuid,
     [string]$CommitHash
   )
   
-  # TODO: Р РµР°Р»РёР·РѕРІР°С‚СЊ РїРѕР»СѓС‡РµРЅРёРµ diff РєРѕРјРјРёС‚Р° С‡РµСЂРµР· API
-  # Р’РѕР·РІСЂР°С‰Р°РµС‚: diff РІ С„РѕСЂРјР°С‚Рµ unified diff
+  # TODO: Реализовать получение diff коммита через API
+  # Возвращает: diff в формате unified diff
   
-  Write-Host "[TODO] Р’С‹Р·РІР°С‚СЊ API /api/repositories/$Uuid/commits/$CommitHash/diff/" -ForegroundColor Yellow
+  Write-Host "[TODO] Вызвать API /api/repositories/$Uuid/commits/$CommitHash/diff/" -ForegroundColor Yellow
   Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/$Uuid/commits/$CommitHash/diff/"
 }
 
 # ============================================================================
-# Р›РѕРєР°Р»СЊРЅС‹Рµ С„СѓРЅРєС†РёРё СЂР°Р±РѕС‚С‹ СЃ СЂРµРїРѕР·РёС‚РѕСЂРёСЏРјРё
+# Локальные функции работы с репозиториями
 # ============================================================================
 
 function Ensure-RepoDirs {
@@ -299,15 +300,14 @@ function Import-FromSource {
   }
   elseif ($Source.ToLower().EndsWith(".zip")) {
     if (-not (Get-Command Expand-Archive -ErrorAction SilentlyContinue)) {
-      Write-Host "[ERROR] Expand-Archive РЅРµРґРѕСЃС‚СѓРїРµРЅ. РСЃРїРѕР»СЊР·СѓР№С‚Рµ PowerShell 5.1 РёР»Рё РІС‹С€Рµ." -ForegroundColor Red
+      Write-Host "[ERROR] Expand-Archive недоступен. Используйте PowerShell 5.1 или выше." -ForegroundColor Red
       exit 1
     }
     Expand-Archive -Path $Source -DestinationPath $Target -Force
   }
   else {
-    Write-Host "[ERROR] РќРµРёР·РІРµСЃС‚РЅС‹Р№ РёСЃС‚РѕС‡РЅРёРє: $Source" -ForegroundColor Red
-    Write-Host "[INFO] РџРѕРґРґРµСЂР¶РёРІР°СЋС‚СЃСЏ: РїР°РїРєР° РёР»Рё zip-Р°СЂС…РёРІ" -ForegroundColor Yellow
+    Write-Host "[ERROR] Неизвестный источник: $Source" -ForegroundColor Red
+    Write-Host "[INFO] Поддерживаются: папка или zip-архив" -ForegroundColor Yellow
     exit 1
   }
 }
-
