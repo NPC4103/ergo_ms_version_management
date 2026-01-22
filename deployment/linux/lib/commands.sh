@@ -181,10 +181,10 @@ cmd_update() {
 # Удаляет репозиторий с компа пользователя
 # ============================================================================
 cmd_remove() {
-  # TODO: Реализовать удаление репозитория
   # 1. Получить UUID из аргументов
   # 2. Найти локальную копию репозитория
   # 3. Удалить локальную копию репозитория
+  # 4. Удалить запись из конфига (~/.ergovcs/repos.json)
   # Примечание: это удаляет только локальную копию, не репозиторий на сервере
   
   local uuid=""
@@ -202,10 +202,74 @@ cmd_remove() {
     exit 1
   fi
   
-  # TODO: Реализовать удаление локальной копии
+  local config_dir="$HOME/.ergovcs"
+  local repos_file="$config_dir/repos.json"
+
+  if [[ ! -f "$repos_file" ]]; then
+    echo "[ERROR] Файл конфигурации репозиториев не найден: $repos_file" >&2
+    echo "[INFO] Нечего удалять. Сначала клонируйте репозиторий (clone) или создайте запись в repos.json." >&2
+    exit 1
+  fi
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "[ERROR] Для команды remove нужен python3 (для работы с JSON)." >&2
+    exit 1
+  fi
+
+  # Достаём local_path из repos.json
+  local local_path=""
+  local_path="$(python3 - "$uuid" "$repos_file" <<'PY'
+import json, sys
+uuid = sys.argv[1]
+path = sys.argv[2]
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+except FileNotFoundError:
+    sys.exit(2)
+except Exception:
+    sys.exit(3)
+repos = (data or {}).get("repositories") or {}
+entry = repos.get(uuid) or {}
+lp = entry.get("local_path") or ""
+sys.stdout.write(lp)
+PY
+)" || true
+
+  if [[ -z "$local_path" ]]; then
+    echo "[ERROR] Репозиторий $uuid не найден в $repos_file" >&2
+    exit 1
+  fi
+
   echo "[INFO] Удаление локальной копии репозитория $uuid..."
-  echo "[TODO] Найти локальную копию репозитория"
-  echo "[TODO] Удалить локальную копию"
+
+  if [[ -d "$local_path" || -f "$local_path" ]]; then
+    rm -rf -- "$local_path"
+    echo "[OK] Локальная копия удалена: $local_path"
+  else
+    echo "[WARN] Локальный путь не найден на диске: $local_path" >&2
+    echo "[INFO] Запись будет удалена из конфига." >&2
+  fi
+
+  # Удаляем запись из repos.json
+  python3 - "$uuid" "$repos_file" <<'PY'
+import json, sys
+uuid = sys.argv[1]
+path = sys.argv[2]
+with open(path, "r", encoding="utf-8") as f:
+    data = json.load(f) or {}
+repos = data.get("repositories")
+if not isinstance(repos, dict):
+    repos = {}
+if uuid in repos:
+    repos.pop(uuid, None)
+data["repositories"] = repos
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+PY
+
+  echo "[OK] Запись удалена из конфига: $repos_file"
 }
 
 cmd_create() {

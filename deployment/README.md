@@ -31,7 +31,16 @@
 
 ### 6. **remove** `<UUID>` — удалить локальную копию
    - Удаляет локальную копию репозитория с компьютера пользователя
+   - Удаляет запись о репозитории из `repos.json`
    - Примечание: удаляет только локальную копию, не репозиторий на сервере
+
+## Дополнительные API функции (для CLI/скриптов)
+
+В `deployment/linux/lib/repo.sh` и `deployment/windows/lib/repo.ps1` доступны функции для работы с коммитами:
+
+- **Список коммитов**: `/api/repositories/{id}/commits/`
+- **Детали коммита**: `/api/repositories/{id}/commits/{commit_hash}/`
+- **Diff коммита**: `/api/repositories/{id}/commits/{commit_hash}/diff/`
 
 ## Вспомогательные команды
 
