@@ -1,67 +1,144 @@
 from django.db import models
+import uuid
+from django.core.validators import MinLengthValidator
+from django.core.exceptions import ValidationError
 
 
-class VersionedModule(models.Model):
+class Repository(models.Model):
     """
-    Система управления версиями: описывает управляемый модуль/компонент системы.
-    """
-
-    slug = models.SlugField(max_length=80, unique=True, verbose_name="Идентификатор модуля")
-    title = models.CharField(max_length=200, verbose_name="Название")
-    description = models.TextField(blank=True, verbose_name="Описание")
-    repository_url = models.URLField(blank=True, verbose_name="URL репозитория")
-    is_active = models.BooleanField(default=True, verbose_name="Активен")
-
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Создано")
-    updated_at = models.DateTimeField(auto_now=True, verbose_name="Обновлено")
-
-    class Meta:
-        db_table = 'vm_versioned_module'
-        verbose_name = "Модуль"
-        verbose_name_plural = "Модули"
-        ordering = ("slug",)
-
-    def __str__(self) -> str:
-        return f"{self.slug}"
-
-
-class Release(models.Model):
-    """
-    Релиз модуля с семантической версией и сопутствующей информацией.
+    Репозиторий - контейнер для веток.
     """
 
-    class ReleaseStatus(models.TextChoices):
-        DRAFT = 'draft', 'Черновик'
-        RELEASED = 'released', 'Выпущен'
-        DEPRECATED = 'deprecated', 'Устарел'
-
-    module = models.ForeignKey(
-        VersionedModule,
-        on_delete=models.CASCADE,
-        related_name='releases',
-        verbose_name="Модуль",
+    public_id = models.UUIDField(
+        default=uuid.uuid4,
+        editable=False,  # Важно: нельзя редактировать через админку
+        unique=True,     # Должен быть уникальным
+        db_index=True,   # Для быстрого поиска
+        help_text="Публичный UUID для использования в API",
+        null=True,       # Разрешить NULL для существующих записей
+        blank=True       # Разрешить пустое значение в формах
     )
-    version = models.CharField(max_length=50, verbose_name="Версия (SemVer)")
-    summary = models.CharField(max_length=255, blank=True, verbose_name="Краткое описание")
-    changelog = models.TextField(blank=True, verbose_name="Изменения")
-    commit_hash = models.CharField(max_length=64, blank=True, verbose_name="Commit hash")
-    status = models.CharField(max_length=16, choices=ReleaseStatus.choices, default=ReleaseStatus.DRAFT, verbose_name="Статус")
-    is_required = models.BooleanField(default=False, verbose_name="Обязательное обновление")
 
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Создано")
-    released_at = models.DateTimeField(null=True, blank=True, verbose_name="Дата релиза")
-
+    name = models.CharField(
+        max_length=100,
+        validators=[MinLengthValidator(1)],
+        help_text="Название репозитория",
+        unique=True
+    )
+    description = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
     class Meta:
-        db_table = 'vm_release'
-        verbose_name = "Релиз"
-        verbose_name_plural = "Релизы"
+        db_table = 'repositories'
+        verbose_name_plural = 'Repositories'
+        app_label = 'version_management'
+        ordering = ['name']
+        indexes = [
+            models.Index(fields=['public_id']),
+            models.Index(fields=['created_at']),
+        ]
+    
+    def __str__(self):
+        return str(self.name)
+    
+    def clean(self):
+        """Базовая валидация названия репозитория"""
+        name = str(self.name).strip()
+        if not name:
+            raise ValidationError({'name': 'Название не может быть пустым'})
+        if name in ('.', '..', '/'):
+            raise ValidationError({'name': 'Некорректное название'})
+    
+    def save(self, *args, **kwargs):
+        """Сохранение с валидацией"""
+        # Автоматически генерируем public_id если он не установлен
+        if not self.public_id:
+            self.public_id = uuid.uuid4()
+        self.clean()
+        super().save(*args, **kwargs)
+
+
+class Branch(models.Model):
+    """
+    Ветка репозитория.
+    """
+    repository = models.ForeignKey(
+        Repository,
+        on_delete=models.CASCADE,
+        related_name='branches'
+    )
+    name = models.CharField(
+        max_length=255,
+        validators=[MinLengthValidator(1)],
+        help_text="Имя ветки (например: main, develop, feature/x)"
+    )
+    is_default = models.BooleanField(
+        default=False,
+        help_text="Ветка по умолчанию для этого репозитория"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        db_table = 'branches'
+        verbose_name_plural = 'Branches'
+        app_label = 'version_management'
+        ordering = ['repository', '-is_default', 'name']
         constraints = [
-            models.UniqueConstraint(fields=["module", "version"], name="uniq_module_version"),
+            models.UniqueConstraint(
+                fields=['repository', 'name'],
+                name='unique_branch_name_per_repository'
+            ),
+            models.UniqueConstraint(
+                fields=['repository'],
+                condition=models.Q(is_default=True),
+                name='only_one_default_branch_per_repository'
+            )
         ]
         indexes = [
-            models.Index(fields=["module", "status"], name="idx_release_module_status"),
+            models.Index(fields=['repository', 'created_at']),
+            models.Index(fields=['repository', 'is_default']),
         ]
-        ordering = ("-created_at",)
-
-    def __str__(self) -> str:
-        return f"{self.module.slug}@{self.version}"
+    
+    def __str__(self):
+        """Безопасный вывод для отладки"""
+        try:
+            if self.repository_id:
+                if hasattr(self.repository, 'name'):
+                    return f"{self.repository.name}/{self.name}"
+                return f"repo_{self.repository_id}/{self.name}"
+        except:
+            pass
+        return f"branch_{self.id or 'new'}/{self.name}"
+    
+    def clean(self):
+        """Базовая валидация имени ветки"""
+        name = str(self.name).strip()
+        if not name:
+            raise ValidationError({'name': 'Имя ветки не может быть пустым'})
+        
+        if name in ('HEAD', 'ORIG_HEAD'):
+            raise ValidationError({'name': 'Зарезервированное системой имя'})
+        
+        if '..' in name:
+            raise ValidationError({'name': 'Нельзя использовать .. в имени'})
+    
+    def save(self, *args, **kwargs):
+        """Простой save для ветки"""
+        if self.pk is None:
+            if not Branch.objects.filter(repository_id=self.repository_id).exists():
+                self.is_default = True
+        
+        self.clean()
+        super().save(*args, **kwargs)
+    
+    @classmethod
+    def set_default_branch(cls, branch):
+        """Простая установка ветки по умолчанию (для API)"""
+        cls.objects.filter(
+            repository_id=branch.repository_id,
+            is_default=True
+        ).update(is_default=False)
+        
+        branch.is_default = True
+        branch.save(update_fields=['is_default'])

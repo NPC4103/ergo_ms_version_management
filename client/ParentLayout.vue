@@ -1,6 +1,6 @@
 <template>
-    <div>
-        <h1>Управление версиями</h1>
+    <div class="version-management-module">
+        <router-view />
     </div>
 </template>
 
