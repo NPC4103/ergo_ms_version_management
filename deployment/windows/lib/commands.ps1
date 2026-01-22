@@ -233,10 +233,14 @@ function Invoke-Create {
   # Парсим ответ от API
   try {
     $responseObj = $response | ConvertFrom-Json
-    $repoId = $responseObj.id
+    $repoId = $responseObj.public_id
+    if (-not $repoId) { $repoId = $responseObj.id }
     $repoName = $responseObj.name
     $repoPath = $responseObj.path
     $createdAt = $responseObj.created_at
+    if (-not $repoPath -and $repoId) {
+      $repoPath = "media/version_management/$repoId"
+    }
 
     Write-Host "[OK] Репозиторий создан." -ForegroundColor Green
     Write-Host "UUID: $repoId"
