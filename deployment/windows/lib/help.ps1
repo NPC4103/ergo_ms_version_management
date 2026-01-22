@@ -1,4 +1,4 @@
-# Справка по использованию утилиты
+﻿# Справка по использованию утилиты
 
 function Show-Help {
   @"
@@ -34,7 +34,7 @@ ergovcs <command> [options]
 
 Вспомогательные команды:
   create [--name <имя>] [--description <текст>]
-    Создать новый локальный репозиторий
+    Создать новый репозиторий
     
   download --source <zip|dir> [--uuid <uuid>] [--name <имя>]
     Скачать/импортировать репозиторий из zip-архива или папки
@@ -52,7 +52,7 @@ ergovcs <command> [options]
   ergovcs push main
   ergovcs update main
   ergovcs remove abc-123-def-456
-  .\version_manager.ps1 create --name "Мой репозиторий" --description "Описание"
+  .\version_manager.ps1 create --name "Мой репозиторий"
   .\version_manager.ps1 download --source "C:\path\to\repo.zip"
 "@ | Write-Host
 }

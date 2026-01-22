@@ -1,4 +1,4 @@
-# Обработчики команд: clone, add, commit, push, update, remove, create, download
+﻿# Обработчики команд: clone, add, commit, push, update, remove, create, download
 
 # ============================================================================
 # Клонирование репозитория
