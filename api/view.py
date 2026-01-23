@@ -469,3 +469,25 @@ class BranchViewSet(viewsets.ModelViewSet):
                 'is_default': branch.is_default
             }
         })
+
+        def delete():
+            pass
+        
+        def list():
+            pass
+
+        def retrieve():
+            pass
+        
+        def commit_create():
+            pass
+
+        def commit_list():
+            pass
+        
+        def commit_retrieve():
+            pass
+        
+        def commit_dif():
+            pass
+        
