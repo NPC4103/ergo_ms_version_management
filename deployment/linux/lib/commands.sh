@@ -308,10 +308,16 @@ cmd_create() {
   local repo_path
   local created_at
   
-  repo_id="$(echo "$response" | grep -o '"id"[^,]*' | cut -d'"' -f4)"
+  repo_id="$(echo "$response" | grep -o '"public_id"[^,]*' | cut -d'"' -f4)"
+  if [[ -z "$repo_id" ]]; then
+    repo_id="$(echo "$response" | grep -o '"id"[^,]*' | cut -d'"' -f4)"
+  fi
   repo_name="$(echo "$response" | grep -o '"name"[^,]*' | cut -d'"' -f4)"
   repo_path="$(echo "$response" | grep -o '"path"[^,]*' | cut -d'"' -f4)"
   created_at="$(echo "$response" | grep -o '"created_at"[^,]*' | cut -d'"' -f4)"
+  if [[ -z "$repo_path" && -n "$repo_id" ]]; then
+    repo_path="media/version_management/$repo_id"
+  fi
   
   echo "[OK] Репозиторий создан."
   echo "UUID:   $repo_id"

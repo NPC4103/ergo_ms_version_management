@@ -1,4 +1,4 @@
-# Общие утилиты: поиск корня проекта, генерация UUID
+﻿# Общие утилиты: поиск корня проекта, генерация UUID
 
 $script:ProjectRoot = $null
 $script:MediaDir = $null

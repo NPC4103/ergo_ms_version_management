@@ -1,4 +1,4 @@
-# Логика работы с репозиториями: создание структуры, сохранение метаданных, импорт, работа с API
+﻿# Логика работы с репозиториями: создание структуры, сохранение метаданных, импорт, работа с API
 
 # ============================================================================
 # Функции для работы с API
@@ -88,12 +88,13 @@ function Invoke-ApiRequest {
   }
   catch {
     # Обработка ошибок
-    $statusCode = $_.Exception.Response.StatusCode.value__
+    $statusCode = $null
     $errorMessage = $_.Exception.Message
     
     # Пытаемся извлечь детали ошибки из ответа
     if ($_.Exception.Response) {
       try {
+        $statusCode = $_.Exception.Response.StatusCode.value__
         $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
         $responseBody = $reader.ReadToEnd()
         $reader.Close()
@@ -209,7 +210,7 @@ function Invoke-ApiUpdateRepository {
   )
   
   # TODO: Реализовать обновление через API
-  # Возвращает: путь к обновленным файлам или архив
+  # Возвращает: путь к обновлённым файлам или архив
   
   $body = @{
     branch = $Branch
@@ -310,4 +311,3 @@ function Import-FromSource {
     exit 1
   }
 }
-
