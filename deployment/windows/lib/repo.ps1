@@ -223,12 +223,10 @@ function Invoke-ApiUpdateRepository {
 function Get-ApiCommitsList {
   param([string]$Uuid)
   
+  # TODO: Реализовать получение списка коммитов через API
   # Возвращает: JSON со списком коммитов
   
-  if (-not $Uuid) {
-    Write-Host "[ERROR] Необходимо указать UUID репозитория" -ForegroundColor Red
-    return $null
-  }
+  Write-Host "[TODO] Вызвать API /api/repositories/$Uuid/commits/" -ForegroundColor Yellow
   Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/$Uuid/commits/"
 }
 
@@ -239,12 +237,10 @@ function Get-ApiCommit {
     [string]$CommitHash
   )
   
+  # TODO: Реализовать получение информации о коммите через API
   # Возвращает: JSON с метаданными коммита
   
-  if (-not $Uuid -or -not $CommitHash) {
-    Write-Host "[ERROR] Необходимо указать UUID репозитория и хеш коммита" -ForegroundColor Red
-    return $null
-  }
+  Write-Host "[TODO] Вызвать API /api/repositories/$Uuid/commits/$CommitHash/" -ForegroundColor Yellow
   Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/$Uuid/commits/$CommitHash/"
 }
 
@@ -255,12 +251,10 @@ function Get-ApiCommitDiff {
     [string]$CommitHash
   )
   
+  # TODO: Реализовать получение diff коммита через API
   # Возвращает: diff в формате unified diff
   
-  if (-not $Uuid -or -not $CommitHash) {
-    Write-Host "[ERROR] Необходимо указать UUID репозитория и хеш коммита" -ForegroundColor Red
-    return $null
-  }
+  Write-Host "[TODO] Вызвать API /api/repositories/$Uuid/commits/$CommitHash/diff/" -ForegroundColor Yellow
   Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/$Uuid/commits/$CommitHash/diff/"
 }
 

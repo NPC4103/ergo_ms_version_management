@@ -178,10 +178,10 @@ function Invoke-Update {
 function Invoke-Remove {
   param([string[]]$Args)
   
+  # TODO: Реализовать удаление репозитория
   # 1. Получить UUID из аргументов
   # 2. Найти локальную копию репозитория
   # 3. Удалить локальную копию репозитория
-  # 4. Удалить запись из конфига (%USERPROFILE%\.ergovcs\repos.json)
   # Примечание: это удаляет только локальную копию, не репозиторий на сервере
   
   $uuid = $null
@@ -196,66 +196,10 @@ function Invoke-Remove {
     exit 1
   }
   
-  $configDir = Join-Path $env:USERPROFILE ".ergovcs"
-  $reposFile = Join-Path $configDir "repos.json"
-
-  if (-not (Test-Path $reposFile)) {
-    Write-Host "[ERROR] Файл конфигурации репозиториев не найден: $reposFile" -ForegroundColor Red
-    Write-Host "[INFO] Нечего удалять. Сначала клонируйте репозиторий (clone) или создайте запись в repos.json." -ForegroundColor Yellow
-    exit 1
-  }
-
-  $data = $null
-  try {
-    $data = (Get-Content -Path $reposFile -Raw -ErrorAction Stop) | ConvertFrom-Json -ErrorAction Stop
-  }
-  catch {
-    Write-Host "[ERROR] Не удалось прочитать JSON: $reposFile" -ForegroundColor Red
-    Write-Host "  $($_.Exception.Message)" -ForegroundColor Yellow
-    exit 1
-  }
-
-  if (-not $data.repositories) {
-    Write-Host "[ERROR] В конфиге нет секции repositories: $reposFile" -ForegroundColor Red
-    exit 1
-  }
-
-  $entry = $data.repositories.$uuid
-  if (-not $entry) {
-    Write-Host "[ERROR] Репозиторий $uuid не найден в $reposFile" -ForegroundColor Red
-    exit 1
-  }
-
-  $localPath = $entry.local_path
+  # TODO: Реализовать удаление локальной копии
   Write-Host "[INFO] Удаление локальной копии репозитория $uuid..." -ForegroundColor Cyan
-
-  if ($localPath -and (Test-Path $localPath)) {
-    try {
-      Remove-Item -Path $localPath -Recurse -Force -ErrorAction Stop
-      Write-Host "[OK] Локальная копия удалена: $localPath" -ForegroundColor Green
-    }
-    catch {
-      Write-Host "[ERROR] Не удалось удалить локальную копию: $localPath" -ForegroundColor Red
-      Write-Host "  $($_.Exception.Message)" -ForegroundColor Yellow
-      exit 1
-    }
-  }
-  else {
-    Write-Host "[WARN] Локальный путь не найден на диске: $localPath" -ForegroundColor Yellow
-    Write-Host "[INFO] Запись будет удалена из конфига." -ForegroundColor Gray
-  }
-
-  # Удаляем запись из repos.json
-  try {
-    $data.repositories.PSObject.Properties.Remove($uuid) | Out-Null
-    $data | ConvertTo-Json -Depth 10 | Set-Content -Path $reposFile -Encoding UTF8
-    Write-Host "[OK] Запись удалена из конфига: $reposFile" -ForegroundColor Green
-  }
-  catch {
-    Write-Host "[ERROR] Не удалось обновить конфиг: $reposFile" -ForegroundColor Red
-    Write-Host "  $($_.Exception.Message)" -ForegroundColor Yellow
-    exit 1
-  }
+  Write-Host "[TODO] Найти локальную копию репозитория" -ForegroundColor Yellow
+  Write-Host "[TODO] Удалить локальную копию" -ForegroundColor Yellow
 }
 
 function Invoke-Create {

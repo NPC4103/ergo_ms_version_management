@@ -197,20 +197,19 @@ api_update_repository() {
 
 # Получить список коммитов через API
 api_list_commits() {
+  # TODO: Реализовать получение списка коммитов через API
   # Параметры:
   #   $1 - UUID репозитория
   # Возвращает: JSON со списком коммитов
   
   local uuid="$1"
-  if [[ -z "$uuid" ]]; then
-    echo "[ERROR] Необходимо указать UUID репозитория" >&2
-    return 1
-  fi
+  echo "[TODO] Вызвать API /api/repositories/$uuid/commits/"
   api_request "GET" "/repositories/$uuid/commits/"
 }
 
 # Получить информацию о коммите через API
 api_get_commit() {
+  # TODO: Реализовать получение информации о коммите через API
   # Параметры:
   #   $1 - UUID репозитория
   #   $2 - хеш коммита
@@ -218,15 +217,13 @@ api_get_commit() {
   
   local uuid="$1"
   local commit_hash="$2"
-  if [[ -z "$uuid" || -z "$commit_hash" ]]; then
-    echo "[ERROR] Необходимо указать UUID репозитория и хеш коммита" >&2
-    return 1
-  fi
+  echo "[TODO] Вызвать API /api/repositories/$uuid/commits/$commit_hash/"
   api_request "GET" "/repositories/$uuid/commits/$commit_hash/"
 }
 
 # Получить diff коммита через API
 api_get_commit_diff() {
+  # TODO: Реализовать получение diff коммита через API
   # Параметры:
   #   $1 - UUID репозитория
   #   $2 - хеш коммита
@@ -234,10 +231,7 @@ api_get_commit_diff() {
   
   local uuid="$1"
   local commit_hash="$2"
-  if [[ -z "$uuid" || -z "$commit_hash" ]]; then
-    echo "[ERROR] Необходимо указать UUID репозитория и хеш коммита" >&2
-    return 1
-  fi
+  echo "[TODO] Вызвать API /api/repositories/$uuid/commits/$commit_hash/diff/"
   api_request "GET" "/repositories/$uuid/commits/$commit_hash/diff/"
 }
 
