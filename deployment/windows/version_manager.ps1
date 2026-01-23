@@ -35,8 +35,8 @@ $LibDir    = Join-Path $ScriptDir "lib"
 
 switch ($Command.ToLower()) {
   "clone"    { Invoke-Clone -Args $Args }
-  "add"      { Invoke-Add -Args $Args }
-  "commit"   { Invoke-Commit -Args $Args }
+  "add"      { Invoke-Add -Files $Args }
+  "commit"   { Invoke-Commit -Message $Args }
   "push"     { Invoke-Push -Args $Args }
   "update"   { Invoke-Update -Args $Args }
   "remove"   { Invoke-Remove -Args $Args }

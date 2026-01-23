@@ -135,25 +135,23 @@ api_clone_repository() {
 
 # Создать коммит через API
 api_create_commit() {
-  # TODO: Реализовать создание коммита через API
   # Параметры:
   #   $1 - UUID репозитория
   #   $2 - сообщение коммита
   #   $3 - список измененных файлов (JSON)
-  # Возвращает: хеш коммита
+  # Возвращает: JSON с информацией о созданном коммите (hash, id, message, etc.)
   
   local uuid="$1"
   local message="$2"
   local files="${3:-}"
   
   local body
-  body="{\"message\": \"$message\""
   if [[ -n "$files" ]]; then
-    body="$body, \"files\": $files"
+    body="{\"message\": \"$message\", \"files\": $files}"
+  else
+    body="{\"message\": \"$message\"}"
   fi
-  body="$body}"
   
-  echo "[TODO] Вызвать API /api/repositories/$uuid/commits/create/"
   api_request "POST" "/repositories/$uuid/commits/create/" "$body"
 }
 
@@ -278,5 +276,161 @@ import_from_source() {
     echo "[INFO] Поддерживаются: папка или zip-архив" >&2
     exit 1
   fi
+}
+
+# ============================================================================
+# Функции для работы со staging area
+# ============================================================================
+
+# Найти корень репозитория (ищет .ergovcs/staging.json или .ergovcs/config.json вверх по дереву)
+find_repository_root() {
+  local start="$(pwd)"
+  while [[ "$start" != "/" ]]; do
+    local ergovcs_dir="$start/.ergovcs"
+    local staging_file="$ergovcs_dir/staging.json"
+    local config_file="$ergovcs_dir/config.json"
+    
+    if [[ -f "$staging_file" ]] || [[ -f "$config_file" ]]; then
+      echo "$start"
+      return 0
+    fi
+    start="$(dirname "$start")"
+  done
+  return 1
+}
+
+# Получить UUID текущего репозитория
+get_current_repository_uuid() {
+  local repo_root
+  repo_root="$(find_repository_root)"
+  if [[ -z "$repo_root" ]]; then
+    return 1
+  fi
+  
+  local staging_file="$repo_root/.ergovcs/staging.json"
+  if [[ -f "$staging_file" ]]; then
+    # Используем python или jq для парсинга JSON, если доступен
+    if command -v python3 >/dev/null 2>&1; then
+      local uuid
+      uuid="$(python3 -c "import json, sys; data = json.load(open('$staging_file')); print(data.get('repository_uuid', ''))" 2>/dev/null)"
+      if [[ -n "$uuid" ]]; then
+        echo "$uuid"
+        return 0
+      fi
+    elif command -v jq >/dev/null 2>&1; then
+      local uuid
+      uuid="$(jq -r '.repository_uuid // empty' "$staging_file" 2>/dev/null)"
+      if [[ -n "$uuid" ]] && [[ "$uuid" != "null" ]]; then
+        echo "$uuid"
+        return 0
+      fi
+    else
+      # Простой парсинг через grep (менее надежный)
+      local uuid
+      uuid="$(grep -o '"repository_uuid"[[:space:]]*:[[:space:]]*"[^"]*"' "$staging_file" 2>/dev/null | cut -d'"' -f4)"
+      if [[ -n "$uuid" ]]; then
+        echo "$uuid"
+        return 0
+      fi
+    fi
+  fi
+  
+  # Пробуем найти UUID из конфига репозиториев
+  local repos_file="$HOME/.ergovcs/repos.json"
+  if [[ -f "$repos_file" ]]; then
+    if command -v python3 >/dev/null 2>&1; then
+      local uuid
+      uuid="$(python3 -c "
+import json, sys
+try:
+    with open('$repos_file') as f:
+        repos = json.load(f)
+    for uuid, repo in repos.get('repositories', {}).items():
+        if repo.get('local_path') == '$repo_root':
+            print(uuid)
+            sys.exit(0)
+except:
+    pass
+" 2>/dev/null)"
+      if [[ -n "$uuid" ]]; then
+        echo "$uuid"
+        return 0
+      fi
+    fi
+  fi
+  
+  return 1
+}
+
+# Получить путь к файлу staging area
+get_staging_file_path() {
+  local repo_root
+  repo_root="$(find_repository_root)"
+  if [[ -z "$repo_root" ]]; then
+    return 1
+  fi
+  
+  local ergovcs_dir="$repo_root/.ergovcs"
+  mkdir -p "$ergovcs_dir"
+  echo "$ergovcs_dir/staging.json"
+}
+
+# Прочитать staging area
+get_staging_area() {
+  local staging_file
+  staging_file="$(get_staging_file_path)"
+  if [[ -z "$staging_file" ]] || [[ ! -f "$staging_file" ]]; then
+    echo '{"repository_uuid": null, "files": [], "pending_commit": null}'
+    return 0
+  fi
+  
+  cat "$staging_file" 2>/dev/null || echo '{"repository_uuid": null, "files": [], "pending_commit": null}'
+}
+
+# Сохранить staging area
+save_staging_area() {
+  local staging_json="$1"
+  local staging_file
+  staging_file="$(get_staging_file_path)"
+  
+  if [[ -z "$staging_file" ]]; then
+    echo "[ERROR] Не удалось определить путь к staging area. Убедитесь, что вы находитесь в репозитории." >&2
+    return 1
+  fi
+  
+  echo "$staging_json" > "$staging_file"
+}
+
+# Определить действие файла (added, modified, deleted)
+get_file_action() {
+  local file_path="$1"
+  local repo_root="$2"
+  
+  local full_path
+  if [[ "$file_path" == /* ]]; then
+    full_path="$file_path"
+  else
+    full_path="$repo_root/$file_path"
+  fi
+  
+  if [[ ! -e "$full_path" ]]; then
+    echo "deleted"
+    return 0
+  fi
+  
+  # Проверяем, существует ли файл в репозитории на сервере
+  # Для простоты считаем, что если файл существует локально, то он modified или added
+  # Проверяем наличие файла в удаленном репозитории через API (если доступно)
+  # Пока что используем эвристику: если файл в подпапках api/ или client/, то это новый файл
+  # В будущем можно добавить проверку через API или локальный индекс
+  
+  local relative_path="${full_path#$repo_root/}"
+  if [[ "$relative_path" == api/* ]] || [[ "$relative_path" == client/* ]]; then
+    # Файлы в api/ или client/ считаем новыми (added)
+    echo "added"
+    return 0
+  fi
+  
+  echo "modified"
 }
 

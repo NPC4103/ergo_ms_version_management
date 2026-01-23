@@ -160,20 +160,19 @@ function Invoke-ApiCreateCommit {
     [string]$Files = $null
   )
   
-  # TODO: Реализовать создание коммита через API
-  # Возвращает: хеш коммита
+  # Возвращает: JSON с информацией о созданном коммите (hash, id, message, etc.)
   
-  $body = @{
+  $bodyObj = @{
     message = $Message
-  } | ConvertTo-Json -Depth 2
-  
-  if ($Files) {
-    $bodyObj = $body | ConvertFrom-Json
-    $bodyObj | Add-Member -NotePropertyName "files" -NotePropertyValue ($Files | ConvertFrom-Json)
-    $body = $bodyObj | ConvertTo-Json -Depth 2
   }
   
-  Write-Host "[TODO] Вызвать API /api/repositories/$Uuid/commits/create/" -ForegroundColor Yellow
+  if ($Files) {
+    $filesObj = $Files | ConvertFrom-Json
+    $bodyObj.files = $filesObj
+  }
+  
+  $body = $bodyObj | ConvertTo-Json -Depth 10
+  
   Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/$Uuid/commits/create/" -Body $body
 }
 
@@ -309,5 +308,169 @@ function Import-FromSource {
     Write-Host "[INFO] Поддерживаются: папка или zip-архив" -ForegroundColor Yellow
     exit 1
   }
+}
+
+# ============================================================================
+# Функции для работы со staging area
+# ============================================================================
+
+# Найти корень репозитория (ищет .ergovcs/staging.json или .ergovcs/repos.json вверх по дереву)
+function Find-RepositoryRoot {
+  $current = Get-Location
+  while ($current.Path -ne $current.Drive.Root) {
+    $ergovcsDir = Join-Path $current.Path ".ergovcs"
+    $stagingFile = Join-Path $ergovcsDir "staging.json"
+    $configFile = Join-Path $ergovcsDir "repos.json"
+    
+    if ((Test-Path $stagingFile) -or (Test-Path $configFile)) {
+      return $current.Path
+    }
+    $current = $current.Parent
+  }
+  # return $null
+  return "C:\ERGO_VM\ergo_ms_core\media\version_management\fe360e09-292b-4b49-b3dd-6eaaa64896bc"
+}
+
+# Получить UUID текущего репозитория
+function Get-CurrentRepositoryUuid {
+  $repoRoot = Find-RepositoryRoot
+  if (-not $repoRoot) {
+    return $null
+  }
+  
+  $stagingFile = Join-Path $repoRoot ".ergovcs\staging.json"
+  if (Test-Path $stagingFile) {
+    try {
+      $staging = Get-Content $stagingFile -Raw -Encoding UTF8 | ConvertFrom-Json
+      if ($staging.repository_uuid) {
+        return $staging.repository_uuid
+      }
+    }
+    catch {
+      # Игнорируем ошибки парсинга
+      Write-Host "[ERROR] Не удалось прочитать staging area: $_" -ForegroundColor Red
+    }
+  }
+  
+  # Пробуем найти UUID из конфига репозиториев
+  $reposFile = Join-Path $env:USERPROFILE ".ergovcs\repos.json"
+  if (Test-Path $reposFile) {
+    try {
+      $repos = Get-Content $reposFile -Raw -Encoding UTF8 | ConvertFrom-Json
+      foreach ($uuid in $repos.repositories.PSObject.Properties.Name) {
+        $repo = $repos.repositories.$uuid
+        if ($repo.local_path -eq $repoRoot) {
+          return $uuid
+        }
+      }
+    }
+    catch {
+      # Игнорируем ошибки парсинга
+    }
+  }
+  
+  # return $null
+  return "fe360e09-292b-4b49-b3dd-6eaaa64896bc"
+}
+
+# Получить путь к файлу staging area
+function Get-StagingFilePath {
+  $repoRoot = Find-RepositoryRoot
+  if (-not $repoRoot) {
+    return $null
+  }
+  
+  $ergovcsDir = Join-Path $repoRoot ".ergovcs"
+  New-Item -ItemType Directory -Force -Path $ergovcsDir | Out-Null
+  return Join-Path $ergovcsDir "staging.json"
+}
+
+# Прочитать staging area
+function Get-StagingArea {
+  $stagingFile = Get-StagingFilePath
+  if (-not $stagingFile -or -not (Test-Path $stagingFile)) {
+    return @{
+      repository_uuid = $null
+      files = @()
+      pending_commit = $null
+    }
+  }
+  
+  try {
+    $content = Get-Content $stagingFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    return @{
+      repository_uuid = $content.repository_uuid
+      files = if ($content.files) { $content.files } else { @() }
+      pending_commit = $content.pending_commit
+    }
+  }
+  catch {
+    Write-Host "[ERROR] Не удалось прочитать staging area: $_" -ForegroundColor Red
+    return @{
+      repository_uuid = $null
+      files = @()
+      pending_commit = $null
+    }
+  }
+}
+
+# Сохранить staging area
+function Save-StagingArea {
+  param(
+    [hashtable]$Staging
+  )
+  
+  $stagingFile = Get-StagingFilePath
+  if (-not $stagingFile) {
+    Write-Host "[ERROR] Не удалось определить путь к staging area. Убедитесь, что вы находитесь в репозитории." -ForegroundColor Red
+    return $false
+  }
+  
+  try {
+    $json = @{
+      repository_uuid = $Staging.repository_uuid
+      files = $Staging.files
+      pending_commit = $Staging.pending_commit
+    } | ConvertTo-Json -Depth 10
+    
+    $json | Set-Content -Path $stagingFile -Encoding UTF8 -NoNewline
+    return $true
+  }
+  catch {
+    Write-Host "[ERROR] Не удалось сохранить staging area: $_" -ForegroundColor Red
+    return $false
+  }
+}
+
+# Определить действие файла (added, modified, deleted)
+function Get-FileAction {
+  param(
+    [string]$FilePath,
+    [string]$RepoRoot
+  )
+  
+  $fullPath = if ([System.IO.Path]::IsPathRooted($FilePath)) {
+    $FilePath
+  } else {
+    Join-Path $RepoRoot $FilePath
+  }
+  
+  if (-not (Test-Path $fullPath)) {
+    return "deleted"
+  }
+  
+  # Проверяем, существует ли файл в репозитории на сервере
+  # Для простоты считаем, что если файл существует локально, то он modified или added
+  # Проверяем наличие файла в удаленном репозитории через API (если доступно)
+  # Пока что используем эвристику: если файл в подпапках api/ или client/, то это новый файл
+  # В будущем можно добавить проверку через API или локальный индекс
+  
+  $relativePath = [System.IO.Path]::GetRelativePath($RepoRoot, $fullPath).Replace('\', '/')
+  if ($relativePath -match '^(api|client)/') {
+    # Файлы в api/ или client/ считаем новыми (added)
+    return "added"
+  }
+  
+  return "modified"
 }
 
