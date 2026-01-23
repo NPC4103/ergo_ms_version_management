@@ -1,18 +1,18 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     Утилита для управления репозиториями version_management
 
 .DESCRIPTION
-    Работает без бэкенда, создавая локальную структуру репозиториев.
-    Поддерживает команды: create, download
+    Консольная утилита модуля version_management.
+    Поддерживает команды: clone, add, commit, push, update, remove, create, download.
 
 .PARAMETER Command
-    Команда для выполнения: create, download, help
+    Команда для выполнения (например: create, clone, push, help)
 
 .EXAMPLE
     .\version_manager.ps1 create --name "Мой репозиторий"
-    .\version_manager.ps1 download --source "C:\path\to\repo.zip"
+    .\version_manager.ps1 clone <UUID>
 #>
 
 param(
@@ -23,6 +23,16 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# Гарантируем корректный вывод/ввод UTF-8 в консоли (актуально для кириллицы в PowerShell)
+try {
+  $utf8 = [System.Text.UTF8Encoding]::new($false)
+  [Console]::InputEncoding = $utf8
+  [Console]::OutputEncoding = $utf8
+  $OutputEncoding = $utf8
+} catch {
+  # ignore: не критично, если не удалось выставить кодировку
+}
 
 # Load modules
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
