@@ -10,6 +10,7 @@ from datetime import datetime
 from django.conf import settings
 import threading
 from pathlib import Path
+import shutil
 
 from .models import Repository, Branch
 from .serializers import (
@@ -358,6 +359,59 @@ Thumbs.db
             'count': branches.count()
         })
 
+    @action(detail=True, methods=['get', 'post', 'delete'], url_path='delete')
+    def delete(self, request, public_id=None):
+        """
+        Удаляет репозиторий из БД и стирает файлы из media/version_management/
+        """
+        print(f"--- [INFO] Попытка удаления репозитория с UUID: {public_id} ---")
+        
+        # 1. Пытаемся найти объект
+        # Так как lookup_field = 'public_id', get_object() сам использует этот UUID
+        instance = self.get_object()
+        
+        repo_name = instance.name
+        repo_uuid = str(instance.public_id)
+        
+        # 2. Формируем путь к папке (media/version_management/UUID)
+        # В твоем файле MEDIA_ROOT уже определен через Path
+        repo_path = os.path.join(MEDIA_ROOT, 'version_management', repo_uuid)
+        
+        print(f"--- [INFO] Путь к файлам: {repo_path} ---")
+
+        try:
+            # 3. Удаляем из базы данных
+            # Ветки (Branch) удалятся каскадом сами
+            instance.delete()
+            print(f"--- [INFO] Запись в БД удалена успешно ---")
+
+            # 4. Удаляем физическую папку
+            if os.path.exists(repo_path):
+                shutil.rmtree(repo_path)
+                status_msg = "Репозиторий и файлы удалены."
+                print(f"--- [INFO] Папка удалена ---")
+            else:
+                status_msg = "Запись удалена, но папка с файлами не была найдена на диске."
+                print(f"--- [INFO] Папка не найдена, удалять нечего ---")
+
+            return Response({
+                "success": True,
+                "message": status_msg,
+                "repo_name": repo_name
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            print(f"--- [INFO] ОШИБКА: {str(e)} ---")
+            return Response({
+                "success": False,
+                "message": f"Произошла ошибка: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def list_repo():
+        pass
+
+    def retrieve():
+        pass
 
 class BranchViewSet(viewsets.ModelViewSet):
     """
@@ -470,14 +524,7 @@ class BranchViewSet(viewsets.ModelViewSet):
             }
         })
 
-        def delete():
-            pass
         
-        def list():
-            pass
-
-        def retrieve():
-            pass
         
         def commit_create():
             pass
