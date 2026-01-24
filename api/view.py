@@ -6,6 +6,7 @@ from django.shortcuts import get_object_or_404
 from django.http import Http404
 import os
 import json
+import difflib
 from datetime import datetime
 from django.conf import settings
 import threading
@@ -544,6 +545,210 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                 'commits': [],
                 'count': 0
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['get'], url_path=r'commits/(?P<commit_hash>[^/.]+)')
+    def commit_retrieve(self, request, public_id=None, commit_hash=None):
+        """
+        Получить метаданные коммита по хешу.
+        GET /api/repositories/{id}/commits/{commit_hash}/
+
+        Возвращает JSON с метаданными коммита (hash, message, branch, author,
+        created_at, files и т.п.) из commit.json или pending_commit.json.
+        """
+        repository = self.get_object()
+
+        repo_uuid = str(repository.public_id)
+        base_path = os.path.join(MEDIA_ROOT, 'version_management', repo_uuid)
+        branches_path = os.path.join(base_path, 'branches')
+
+        if not os.path.exists(branches_path) or not os.path.isdir(branches_path):
+            return Response({
+                'error': 'Коммит не найден',
+                'commit_hash': commit_hash
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        for branch_name in os.listdir(branches_path):
+            branch_path = os.path.join(branches_path, branch_name)
+            if not os.path.isdir(branch_path):
+                continue
+            pending_path = os.path.join(branch_path, 'pending_commit.json')
+            if os.path.exists(pending_path):
+                try:
+                    with open(pending_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    if not data.get('pushed', False) and data.get('hash') == commit_hash:
+                        if 'branch' not in data:
+                            data = {**data, 'branch': branch_name}
+                        return Response(data)
+                except (json.JSONDecodeError, IOError):
+                    pass
+
+        for branch_name in os.listdir(branches_path):
+            branch_path = os.path.join(branches_path, branch_name)
+            if not os.path.isdir(branch_path):
+                continue
+            commits_path = os.path.join(branch_path, 'commits')
+            if not os.path.exists(commits_path) or not os.path.isdir(commits_path):
+                continue
+            for commit_dir in os.listdir(commits_path):
+                commit_dir_path = os.path.join(commits_path, commit_dir)
+                if not os.path.isdir(commit_dir_path):
+                    continue
+                commit_json_path = os.path.join(commit_dir_path, 'commit.json')
+                if os.path.exists(commit_json_path):
+                    try:
+                        with open(commit_json_path, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                    except (json.JSONDecodeError, IOError):
+                        continue
+                    if data.get('hash') == commit_hash or commit_dir == commit_hash:
+                        return Response(data)
+
+        return Response({
+            'error': 'Коммит не найден',
+            'commit_hash': commit_hash
+        }, status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['get'], url_path=r'commits/(?P<commit_hash>[^/.]+)/diff')
+    def commit_diff(self, request, public_id=None, commit_hash=None):
+        """
+        Получить унифицированный diff коммита (конкретные изменения).
+        GET /api/repositories/{id}/commits/{commit_hash}/diff/
+
+        Возвращает текст в формате unified diff: ---/+++ заголовки, @@ hunks, -/+ строки.
+        Для новых файлов: --- /dev/null, для удалённых: +++ /dev/null.
+        """
+        repository = self.get_object()
+
+        repo_uuid = str(repository.public_id)
+        base_path = os.path.join(MEDIA_ROOT, 'version_management', repo_uuid)
+        branches_path = os.path.join(base_path, 'branches')
+
+        if not os.path.exists(branches_path) or not os.path.isdir(branches_path):
+            return Response({
+                'error': 'Коммит не найден',
+                'commit_hash': commit_hash
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        commit_data = None
+        found_branch_path = None
+
+        for branch_name in os.listdir(branches_path):
+            branch_path = os.path.join(branches_path, branch_name)
+            if not os.path.isdir(branch_path):
+                continue
+            pending_path = os.path.join(branch_path, 'pending_commit.json')
+            if os.path.exists(pending_path):
+                try:
+                    with open(pending_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    if not data.get('pushed', False) and data.get('hash') == commit_hash:
+                        commit_data = data
+                        found_branch_path = branch_path
+                        break
+                except (json.JSONDecodeError, IOError):
+                    pass
+
+        if commit_data is None:
+            for branch_name in os.listdir(branches_path):
+                branch_path = os.path.join(branches_path, branch_name)
+                if not os.path.isdir(branch_path):
+                    continue
+                commits_path = os.path.join(branch_path, 'commits')
+                if not os.path.exists(commits_path) or not os.path.isdir(commits_path):
+                    continue
+                for commit_dir in os.listdir(commits_path):
+                    commit_dir_path = os.path.join(commits_path, commit_dir)
+                    if not os.path.isdir(commit_dir_path):
+                        continue
+                    commit_json_path = os.path.join(commit_dir_path, 'commit.json')
+                    if os.path.exists(commit_json_path):
+                        try:
+                            with open(commit_json_path, 'r', encoding='utf-8') as f:
+                                data = json.load(f)
+                        except (json.JSONDecodeError, IOError):
+                            continue
+                        if data.get('hash') == commit_hash or commit_dir == commit_hash:
+                            commit_data = data
+                            found_branch_path = branch_path
+                            break
+                if commit_data is not None:
+                    break
+
+        if commit_data is None:
+            return Response({
+                'error': 'Коммит не найден',
+                'commit_hash': commit_hash
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        our_created = commit_data.get('created_at') or commit_data.get('updated_at') or ''
+        commits_path = os.path.join(found_branch_path, 'commits')
+        parent_data = None
+
+        if os.path.exists(commits_path) and os.path.isdir(commits_path):
+            candidates = []
+            for commit_dir in os.listdir(commits_path):
+                commit_dir_path = os.path.join(commits_path, commit_dir)
+                if not os.path.isdir(commit_dir_path):
+                    continue
+                commit_json_path = os.path.join(commit_dir_path, 'commit.json')
+                if not os.path.exists(commit_json_path):
+                    continue
+                try:
+                    with open(commit_json_path, 'r', encoding='utf-8') as f:
+                        cdata = json.load(f)
+                except (json.JSONDecodeError, IOError):
+                    continue
+                if cdata.get('hash') == commit_hash or commit_dir == commit_hash:
+                    continue
+                created = cdata.get('created_at') or cdata.get('updated_at') or ''
+                candidates.append((created, cdata))
+            candidates.sort(key=lambda x: x[0])
+            for created, cdata in reversed(candidates):
+                if created < our_created:
+                    parent_data = cdata
+                    break
+
+        parent_files = {}
+        if parent_data:
+            parent_files = {
+                f['path']: f.get('content', '')
+                for f in parent_data.get('files', [])
+                if f.get('path')
+            }
+
+        def _content_to_lines(content):
+            if content is None:
+                content = ''
+            return [line + '\n' for line in (content or '').splitlines()] if (content or '') else []
+
+        diff_parts = []
+        for f in commit_data.get('files', []):
+            path = f.get('path')
+            if not path:
+                continue
+            content = f.get('content', '')
+            action = f.get('action', 'modified')
+
+            if action == 'added' or (path not in parent_files and content):
+                fromfile, tofile = '/dev/null', 'b/' + path
+                fromlines, tolines = [], _content_to_lines(content)
+            elif action == 'deleted' or (path in parent_files and not content):
+                fromfile, tofile = 'a/' + path, '/dev/null'
+                fromlines = _content_to_lines(parent_files.get(path, ''))
+                tolines = []
+            else:
+                fromfile, tofile = 'a/' + path, 'b/' + path
+                fromlines = _content_to_lines(parent_files.get(path, ''))
+                tolines = _content_to_lines(content)
+
+            ud = list(difflib.unified_diff(fromlines, tolines, fromfile=fromfile, tofile=tofile, lineterm='\n'))
+            if ud:
+                diff_parts.append(''.join(ud))
+
+        diff_text = '\n'.join(diff_parts) if diff_parts else ''
+
+        return Response(diff_text, content_type='text/plain; charset=utf-8')
 
     def _generate_commit_hash(self, repository, branch, message, files):
         """
