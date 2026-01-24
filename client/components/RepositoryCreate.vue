@@ -154,33 +154,39 @@ const removeOwner = (id) => {
 
 const createRepo = async () => {
     if (!form.name.trim()) {
-      toast.warning('Введите название');
-      return;
+        toast.warning('Введите название');
+        return;
     }
 
     loading.value = true;
+    console.log('Отправка данных на:', versionManagementEndpoints.version_management.create);
+
     try {
-        // Шлем ТОЛЬКО то, что есть в RepositoryCreateSerializer
         const payload = {
             name: form.name,
             description: form.description,
-            initial_branch_name: 'main' // Добавь это поле
+            initial_branch_name: 'main'
         };
 
         const response = await apiClient.post(versionManagementEndpoints.version_management.create, payload);
         
-        // DRF возвращает данные объекта при успехе, а не поле success
-        // Проверяем статус ответа через твой apiClient
-        if (response) { 
+        // Проверяем наличие данных в ответе (для DRF это обычно объект созданного репозитория)
+        if (response.data || response.id) { 
             toast.success('Репозиторий успешно создан');
             router.push({ name: 'RepositoryList' });
         }
     } catch (error) {
-        // Выведи ошибку бэка в консоль, чтобы увидеть, на какое поле он ругается
-        console.error('Ошибка от Бэка:', error.response?.data);
-        toast.error('Ошибка сервера: ' + JSON.stringify(error.response?.data));
+        console.error('ПОЛНАЯ ОШИБКА:', error.response?.data || error);
+        
+        // Если бэк прислал HTML вместо JSON (ошибка 404/500)
+        const errorData = error.response?.data;
+        const errorMessage = typeof errorData === 'string' && errorData.includes('<!DOCTYPE') 
+            ? 'Ошибка сервера (404/500). Проверь URL в Network.'
+            : JSON.stringify(errorData);
+
+        toast.error('Ошибка: ' + errorMessage);
     } finally {
-        loading.value = false;
+        loading.value = false; // Кнопка снова станет активной в любом случае
     }
 };
 </script>

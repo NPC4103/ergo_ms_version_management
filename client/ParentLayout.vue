@@ -1,8 +1,10 @@
 <template>
     <div class="version-management-module">
-        <router-view />
+        <router-view :key="$route.name" />
+
     </div>
 </template>
+
 
 <script setup>
 </script>
