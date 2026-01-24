@@ -1,16 +1,24 @@
 export const versionManagementEndpoints = {
     version_management: {
-        list: 'version_management/repositories/list/',
-        create: 'version_management/repositories/create/',
+        // Убираем /list/ и /create/ — в REST это один и тот же путь, 
+        // просто GET (список) или POST (создание)
+        list: 'version_management/repositories/', 
+        create: 'version_management/repositories/', 
+        
         retrieve: id => `version_management/repositories/${id}/`,
-        update: id => `repositories/${id}/update/`,
-        delete: id => `repositories/${id}/delete/`,
-        commit_create: id => `repositories/${id}/commits/create/`,
-        commits_list: id => `repositories/${id}/commits/`,
-        commit_retrieve: (id, hash) => `repositories/${id}/commits/${hash}/`,
-        commit_diff: (id, hash) => `repositories/${id}/commits/${hash}/diff/`,
-        clone: id => `repositories/${id}/clone/`,
-        push: id => `repositories/${id}/push/`
+        
+        // Тут тоже убирай /update/ и /delete/
+        // Обновление — это PUT/PATCH на ID, удаление — это DELETE на ID
+        update: id => `version_management/repositories/${id}/`,
+        delete: id => `version_management/repositories/${id}/`,
+
+        // С коммитами та же беда, если там тоже роутер:
+        commits_list: id => `version_management/repositories/${id}/commits/`,
+        commit_create: id => `version_management/repositories/${id}/commits/`,
+        
+        // Остальное (clone, push) — это @action, их пока не трогай, 
+        // но проверь префикс version_management/
+        clone: id => `version_management/repositories/${id}/clone/`,
+        push: id => `version_management/repositories/${id}/push/`
     }
 };
-

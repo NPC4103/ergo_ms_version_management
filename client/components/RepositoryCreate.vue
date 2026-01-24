@@ -153,34 +153,32 @@ const removeOwner = (id) => {
 };
 
 const createRepo = async () => {
-    // Basic Validation
     if (!form.name.trim()) {
-      toast.warning('Пожалуйста, введите название репозитория');
+      toast.warning('Введите название');
       return;
     }
 
     loading.value = true;
     try {
+        // Шлем ТОЛЬКО то, что есть в RepositoryCreateSerializer
         const payload = {
             name: form.name,
             description: form.description,
-            visibility: form.visibility,
-            license: form.license !== 'none' ? form.license : null,
-            owners: form.owners
+            initial_branch_name: 'main' // Добавь это поле
         };
 
         const response = await apiClient.post(versionManagementEndpoints.version_management.create, payload);
         
-        if (response.success) {
+        // DRF возвращает данные объекта при успехе, а не поле success
+        // Проверяем статус ответа через твой apiClient
+        if (response) { 
             toast.success('Репозиторий успешно создан');
-            router.push({ name: 'RepositoryList' }); // Navigate back to list
-        } else {
-            // Handle specific errors if needed
-            toast.error(response.message || 'Ошибка создания репозитория');
+            router.push({ name: 'RepositoryList' });
         }
     } catch (error) {
-        toast.error('Ошибка сети или сервера');
-        console.error(error);
+        // Выведи ошибку бэка в консоль, чтобы увидеть, на какое поле он ругается
+        console.error('Ошибка от Бэка:', error.response?.data);
+        toast.error('Ошибка сервера: ' + JSON.stringify(error.response?.data));
     } finally {
         loading.value = false;
     }
