@@ -161,20 +161,34 @@ function Invoke-ApiCreateCommit {
     [string]$Files = $null
   )
   
-  # Возвращает: JSON с информацией о созданном коммите (hash, id, message, etc.)
-  
-  $bodyObj = @{
-    message = $Message
+  # Преобразуем строку JSON в объект, если она передана
+  $filesArray = @()
+  if ($Files) {
+    try {
+      if ($Files -is [string]) {
+        $filesArray = $Files | ConvertFrom-Json
+      } else {
+        $filesArray = $Files
+      }
+    }
+    catch {
+      Write-Host "[ERROR] Не удалось преобразовать файлы: $_" -ForegroundColor Red
+      return $null
+    }
   }
   
-  if ($Files) {
-    $filesObj = $Files | ConvertFrom-Json
-    $bodyObj.files = $filesObj
+  # Подготавливаем тело запроса
+  $bodyObj = @{
+    message = $Message
+    files = $filesArray
   }
   
   $body = $bodyObj | ConvertTo-Json -Depth 10
   
-  Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/$Uuid/commits/create/" -Body $body
+  # Вызываем API
+  $response = Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/$Uuid/commits/create/" -Body $body
+  
+  return $response
 }
 
 # Отправить изменения через API
@@ -316,7 +330,7 @@ function Import-FromSource {
 # ============================================================================
 
 # Найти корень репозитория (ищет .ergovcs/staging.json или .ergovcs/repos.json вверх по дереву)
-function Find-RepositoryRoot {
+function Find-LocalRepositoryRoot {
   $current = Get-Location
   while ($current.Path -ne $current.Drive.Root) {
     $ergovcsDir = Join-Path $current.Path ".ergovcs"
@@ -328,60 +342,112 @@ function Find-RepositoryRoot {
     }
     $current = $current.Parent
   }
-  # return $null
-  return "C:\ERGO_VM\ergo_ms_core\media\version_management\fe360e09-292b-4b49-b3dd-6eaaa64896bc"
+  return $null
 }
 
 # Получить UUID текущего репозитория
 function Get-CurrentRepositoryUuid {
-  $repoRoot = Find-RepositoryRoot
-  if (-not $repoRoot) {
+  # Получаем корень репозитория (текущую директорию или ближайшую родительскую с .ergovcs)
+  $localPath = Find-LocalRepositoryRoot
+  if (-not $localPath) {
+    Write-Host "[DEBUG] Корень репозитория не найден" -ForegroundColor Gray
     return $null
   }
   
-  $stagingFile = Join-Path $repoRoot ".ergovcs\staging.json"
-  if (Test-Path $stagingFile) {
-    try {
-      $staging = Get-Content $stagingFile -Raw -Encoding UTF8 | ConvertFrom-Json
-      if ($staging.repository_uuid) {
-        return $staging.repository_uuid
-      }
-    }
-    catch {
-      # Игнорируем ошибки парсинга
-      Write-Host "[ERROR] Не удалось прочитать staging area: $_" -ForegroundColor Red
-    }
-  }
+  Write-Host "[DEBUG] Корень репозитория: $localPath" -ForegroundColor Gray
   
-  # Пробуем найти UUID из конфига репозиториев
-  $reposFile = Join-Path $env:USERPROFILE ".ergovcs\repos.json"
-  if (Test-Path $reposFile) {
+  # Путь к локальному файлу repos.json в .ergovcs директории
+  $localReposFile = Join-Path $localPath ".ergovcs" "repos.json"
+  Write-Host "[DEBUG] Ищем локальный файл: $localReposFile" -ForegroundColor Gray
+  
+  # Пробуем сначала прочитать из локального .ergovcs/repos.json
+  if (Test-Path $localReposFile) {
+    Write-Host "[DEBUG] Локальный файл repos.json найден" -ForegroundColor Gray
     try {
-      $repos = Get-Content $reposFile -Raw -Encoding UTF8 | ConvertFrom-Json
-      foreach ($uuid in $repos.repositories.PSObject.Properties.Name) {
-        $repo = $repos.repositories.$uuid
-        if ($repo.local_path -eq $repoRoot) {
+      $reposJson = Get-Content $localReposFile -Raw -Encoding UTF8
+      $repos = $reposJson | ConvertFrom-Json -ErrorAction Stop
+      
+      Write-Host "[DEBUG] Прочитано репозиториев: $($repos.repositories.PSObject.Properties.Count)" -ForegroundColor Gray
+      
+      # Ищем репозиторий с local_path, который совпадает с текущим путем
+      foreach ($property in $repos.repositories.PSObject.Properties) {
+        $uuid = $property.Name
+        $repo = $property.Value
+        
+        Write-Host "[DEBUG] Проверяем репозиторий: $uuid" -ForegroundColor Gray
+        Write-Host "[DEBUG]  local_path: $($repo.local_path)" -ForegroundColor Gray
+        Write-Host "[DEBUG]  current: $localPath" -ForegroundColor Gray
+        
+        # Сравниваем пути (учитываем возможные различия в формате)
+        if ($repo.local_path -and (
+            $repo.local_path -eq $localPath -or 
+            (Resolve-Path $repo.local_path -ErrorAction SilentlyContinue) -eq (Resolve-Path $localPath -ErrorAction SilentlyContinue))) {
+          Write-Host "[DEBUG] Найден UUID: $uuid" -ForegroundColor Gray
           return $uuid
         }
       }
     }
     catch {
-      # Игнорируем ошибки парсинга
+      Write-Host "[ERROR] Не удалось прочитать или распарсить локальный repos.json: $_" -ForegroundColor Red
+    }
+  } else {
+    Write-Host "[DEBUG] Локальный файл repos.json не найден" -ForegroundColor Gray
+  }
+  
+  # Фолбэк: проверяем staging.json (если существует)
+  $stagingFile = Join-Path $localPath ".ergovcs\staging.json"
+  if (Test-Path $stagingFile) {
+    Write-Host "[DEBUG] Пробуем прочитать staging.json" -ForegroundColor Gray
+    try {
+      $stagingJson = Get-Content $stagingFile -Raw -Encoding UTF8
+      $staging = $stagingJson | ConvertFrom-Json -ErrorAction Stop
+      if ($staging.repository_uuid) {
+        Write-Host "[DEBUG] Найден UUID из staging: $($staging.repository_uuid)" -ForegroundColor Gray
+        return $staging.repository_uuid
+      }
+    }
+    catch {
+      Write-Host "[ERROR] Не удалось прочитать staging area: $_" -ForegroundColor Red
     }
   }
   
-  # return $null
-  return "fe360e09-292b-4b49-b3dd-6eaaa64896bc"
+  # Фолбэк: проверяем глобальный файл (для обратной совместимости)
+  $globalReposFile = Join-Path $env:USERPROFILE ".ergovcs\repos.json"
+  if (Test-Path $globalReposFile) {
+    Write-Host "[DEBUG] Пробуем глобальный файл: $globalReposFile" -ForegroundColor Gray
+    try {
+      $reposJson = Get-Content $globalReposFile -Raw -Encoding UTF8
+      $repos = $reposJson | ConvertFrom-Json -ErrorAction Stop
+      
+      foreach ($property in $repos.repositories.PSObject.Properties) {
+        $uuid = $property.Name
+        $repo = $property.Value
+        
+        if ($repo.local_path -and (
+            $repo.local_path -eq $localPath -or 
+            (Resolve-Path $repo.local_path -ErrorAction SilentlyContinue) -eq (Resolve-Path $localPath -ErrorAction SilentlyContinue))) {
+          Write-Host "[DEBUG] Найден UUID в глобальном файле: $uuid" -ForegroundColor Gray
+          return $uuid
+        }
+      }
+    }
+    catch {
+      Write-Host "[ERROR] Не удалось прочитать глобальный repos.json: $_" -ForegroundColor Red
+    }
+  }
+  
+  Write-Host "[DEBUG] UUID репозитория не найден" -ForegroundColor Gray
+  return $null
 }
 
 # Получить путь к файлу staging area
 function Get-StagingFilePath {
-  $repoRoot = Find-RepositoryRoot
-  if (-not $repoRoot) {
+  $localPath = Find-LocalRepositoryRoot
+  if (-not $localPath) {
     return $null
   }
   
-  $ergovcsDir = Join-Path $repoRoot ".ergovcs"
+  $ergovcsDir = Join-Path $localPath ".ergovcs"
   New-Item -ItemType Directory -Force -Path $ergovcsDir | Out-Null
   return Join-Path $ergovcsDir "staging.json"
 }
@@ -447,13 +513,13 @@ function Save-StagingArea {
 function Get-FileAction {
   param(
     [string]$FilePath,
-    [string]$RepoRoot
+    [string]$LocalPath
   )
   
   $fullPath = if ([System.IO.Path]::IsPathRooted($FilePath)) {
     $FilePath
   } else {
-    Join-Path $RepoRoot $FilePath
+    Join-Path $LocalPath $FilePath
   }
   
   if (-not (Test-Path $fullPath)) {
@@ -466,7 +532,7 @@ function Get-FileAction {
   # Пока что используем эвристику: если файл в подпапках api/ или client/, то это новый файл
   # В будущем можно добавить проверку через API или локальный индекс
   
-  $relativePath = [System.IO.Path]::GetRelativePath($RepoRoot, $fullPath).Replace('\', '/')
+  $relativePath = [System.IO.Path]::GetRelativePath($LocalPath, $fullPath).Replace('\', '/')
   if ($relativePath -match '^(api|client)/') {
     # Файлы в api/ или client/ считаем новыми (added)
     return "added"

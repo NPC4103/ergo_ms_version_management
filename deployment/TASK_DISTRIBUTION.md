@@ -216,7 +216,7 @@ export API_PORT="8000"
 
 ## Форматы данных (требуют согласования)
 
-### Staging Area (`.ergovcs/staging.json`)
+### Staging Area (`~/.ergovcs/staging.json`)
 ```json
 {
   "repository_uuid": "abc-123-def",
@@ -247,6 +247,22 @@ export API_PORT="8000"
     }
   }
 }
+```
+
+### Структура коммитов (`~\ergo_ms_core\media\version_management\87bdee75-e5e2-4e4f-a517-f1d2a71b4f31\branches\main\commits\7f83b165....json`)
+```json
+{
+  {
+  "hash": "7f83b165...",
+  "message": "Hello world!",
+  "branch": "main",
+  "created_at": "2024-01-01T12:00:00Z",
+  "author": "User",
+  "files": []
+  }
+}
+```
+
 ```
 
 ### Формат данных для API запросов
