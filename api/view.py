@@ -45,260 +45,119 @@ class RepositoryViewSet(viewsets.ModelViewSet):
             return RepositoryUpdateSerializer
         return RepositorySerializer
 
+    # Добавьте этот метод в класс RepositoryViewSet в view.py
+
     def create(self, request, *args, **kwargs):
         """
-        Создать репозиторий и автоматически создать физическую структуру
+        Создание репозитория с физической папкой в файловой системе.
+        POST /api/version_management/repositories/
         """
-        # 1. Создаем репозиторий в БД
-        response = super().create(request, *args, **kwargs)
-
-        # 2. Если успешно, создаем физическую структуру
-        if response.status_code == status.HTTP_201_CREATED:
-            # Получаем созданный репозиторий из ответа
-            repo_public_id = response.data.get('public_id')
+        serializer = RepositoryCreateSerializer(data=request.data)
+        
+        if serializer.is_valid():
             try:
-                repository = Repository.objects.get(public_id=repo_public_id)
-
-                # Запускаем асинхронное создание физической структуры
-                self._create_physical_repository_async(repository)
-
-                # Добавляем информацию в ответ
-                response.data['physical_structure'] = {
-                    'status': 'scheduled',
-                    'message': 'Физическая структура будет создана в фоновом режиме'
-                }
-
-            except Exception as e:
-                print(f"Warning: Could not schedule physical repository creation: {e}")
-
-        return response
-
-    def _create_physical_repository_async(self, repository):
-        """
-        Асинхронное создание физического репозитория
-        """
-        def create_physical():
-            try:
+                # Создаем репозиторий в базе данных
+                repository = serializer.save()
+                
+                # Получаем UUID из созданного репозитория
                 repo_uuid = str(repository.public_id)
-                base_path = os.path.join(MEDIA_ROOT, 'version_management', repo_uuid)
-
-                if not os.path.exists(base_path):
-                    os.makedirs(base_path, exist_ok=True)
-
-                    # Создаем подпапки
-                    api_path = os.path.join(base_path, 'api')
-                    client_path = os.path.join(base_path, 'client')
-                    os.makedirs(api_path, exist_ok=True)
-                    os.makedirs(client_path, exist_ok=True)
-
-                    # Создаем папки для существующих веток
-                    branches = repository.branches.all()
-                    for branch in branches:
-                        branch_path = os.path.join(base_path, branch.name)
-                        os.makedirs(branch_path, exist_ok=True)
-
-                    # Создаем файлы
-                    self._create_repository_files(repository, base_path)
-
-                    print(f"✓ Физический репозиторий создан: {base_path}")
-            except Exception as e:
-                print(f"✗ Ошибка при создании физического репозитория: {e}")
-
-        # Запускаем в отдельном потоке
-        thread = threading.Thread(target=create_physical)
-        thread.daemon = True
-        thread.start()
-
-    def _create_repository_files(self, repository, base_path):
-        """Создание файлов репозитория"""
-        # manifest.json
-        manifest = {
-            "id": str(repository.public_id),
-            "name": repository.name,
-            "description": repository.description,
-            "created_at": repository.created_at.isoformat() if repository.created_at else datetime.now().isoformat(),
-            "updated_at": repository.updated_at.isoformat() if repository.updated_at else datetime.now().isoformat(),
-            "version": "1.0.0"
-        }
-
-        with open(os.path.join(base_path, 'manifest.json'), 'w', encoding='utf-8') as f:
-            json.dump(manifest, f, indent=2, ensure_ascii=False)
-
-        # README.md
-        readme_content = f"""# {repository.name}
-
-{repository.description if repository.description else 'Репозиторий для управления версиями'}
-
-## Основная информация
-- **ID**: {repository.public_id}
-- **Создан**: {repository.created_at.strftime('%Y-%m-%d %H:%M:%S') if repository.created_at else 'Неизвестно'}
-- **Обновлен**: {repository.updated_at.strftime('%Y-%m-%d %H:%M:%S') if repository.updated_at else 'Неизвестно'}
-
-## Структура
-- `/api/` - серверная часть
-- `/client/` - клиентская часть
-- `/<branch_name>/` - рабочие директории веток
-"""
-
-        with open(os.path.join(base_path, 'README.md'), 'w', encoding='utf-8') as f:
-            f.write(readme_content)
-
-        # .gitignore
-        gitignore_content = """# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Environments
-.env
-.venv
-env/
-venv/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# System
-.DS_Store
-Thumbs.db
-"""
-
-        with open(os.path.join(base_path, '.gitignore'), 'w', encoding='utf-8') as f:
-            f.write(gitignore_content)
-
-    def get_object(self):
-        """
-        Получить объект по public_id.
-        Если не найден по public_id, пробуем по id для обратной совместимости.
-        """
-        queryset = self.filter_queryset(self.get_queryset())
-
-        # Получаем значение из URL
-        lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
-        lookup_value = self.kwargs.get(lookup_url_kwarg)
-
-        if lookup_value:
-            try:
-                # Сначала ищем по public_id (UUID)
-                obj = queryset.get(public_id=lookup_value)
-                self.check_object_permissions(self.request, obj)
-                return obj
-            except (Repository.DoesNotExist, ValueError):
-                # Если не UUID, может быть числовой id для обратной совместимости
+                
+                # Формируем путь для физического репозитория
+                repo_path = os.path.join(MEDIA_ROOT, 'version_management', repo_uuid)
+                
+                # Создаем структуру папок
                 try:
-                    obj = queryset.get(id=lookup_value)
-                    self.check_object_permissions(self.request, obj)
-                    return obj
-                except Repository.DoesNotExist:
-                    pass
+                    # Основная папка репозитория
+                    os.makedirs(repo_path, exist_ok=True)
+                    print(f"--- [INFO] Создана папка репозитория: {repo_path} ---")
+                    
+                    # Папка для веток
+                    branches_path = os.path.join(repo_path, 'branches')
+                    os.makedirs(branches_path, exist_ok=True)
+                    
+                    # Создаем папку для дефолтной ветки
+                    default_branch = repository.branches.filter(is_default=True).first()
+                    if default_branch:
+                        default_branch_path = os.path.join(branches_path, default_branch.name)
+                        os.makedirs(default_branch_path, exist_ok=True)
+                        
+                        # Создаем папку для коммитов в дефолтной ветке
+                        commits_path = os.path.join(default_branch_path, 'commits')
+                        os.makedirs(commits_path, exist_ok=True)
+                        
+                        # Создаем начальный коммит (опционально)
+                        initial_commit_dir = os.path.join(commits_path, 'initial')
+                        os.makedirs(initial_commit_dir, exist_ok=True)
+                        
+                        # Создаем файл с информацией о начальном коммите
+                        initial_commit_info = {
+                            'hash': 'initial',
+                            'message': 'Initial commit',
+                            'branch': default_branch.name,
+                            'created_at': repository.created_at.isoformat(),
+                            'author': 'System',
+                            'files': []
+                        }
+                        
+                        initial_commit_path = os.path.join(initial_commit_dir, 'commit.json')
+                        with open(initial_commit_path, 'w', encoding='utf-8') as f:
+                            json.dump(initial_commit_info, f, indent=2, ensure_ascii=False)
+                    
+                    # Создаем файл README.md в корне репозитория
+                    readme_path = os.path.join(repo_path, 'README.md')
+                    with open(readme_path, 'w', encoding='utf-8') as f:
+                        f.write(f"# {repository.name}\n\n")
+                        f.write(f"{repository.description or 'No description provided.'}\n\n")
+                        f.write(f"Created: {repository.created_at}\n")
+                        f.write(f"UUID: {repo_uuid}\n")
+                    
+                    # Создаем файл с метаинформацией о репозитории
+                    repo_info_path = os.path.join(repo_path, '.repo_info.json')
+                    repo_info = {
+                        'uuid': repo_uuid,
+                        'name': repository.name,
+                        'description': repository.description,
+                        'created_at': repository.created_at.isoformat(),
+                        'branches': [
+                            {
+                                'name': branch.name,
+                                'is_default': branch.is_default,
+                                'created_at': branch.created_at.isoformat()
+                            }
+                            for branch in repository.branches.all()
+                        ]
+                    }
+                    
+                    with open(repo_info_path, 'w', encoding='utf-8') as f:
+                        json.dump(repo_info, f, indent=2, ensure_ascii=False)
+                    
+                    print(f"--- [INFO] Физическая структура репозитория создана успешно ---")
+                    
+                    # Добавляем информацию о физическом пути в ответ
+                    response_data = RepositorySerializer(repository).data
+                    response_data['physical_path'] = repo_path
+                    response_data['physical_structure_created'] = True
+                    
+                    return Response(response_data, status=status.HTTP_201_CREATED)
+                    
+                except OSError as e:
+                    print(f"--- [ERROR] Ошибка создания файловой структуры: {e} ---")
+                    # Удаляем репозиторий из базы данных, если не удалось создать файлы
+                    repository.delete()
+                    return Response({
+                        'success': False,
+                        'error': f'Не удалось создать физическую структуру репозитория: {str(e)}'
+                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                    
+            except Exception as e:
+                print(f"--- [ERROR] Ошибка при создании репозитория: {e} ---")
+                return Response({
+                    'success': False,
+                    'error': f'Ошибка при создании репозитория: {str(e)}'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        raise Http404('Репозиторий не найден')
-
-    @action(detail=True, methods=['post'])
-    def create_physical_repository(self, request, public_id=None):
-        """
-        Создать физический репозиторий в файловой системе.
-        POST /repositories/{public_id}/create_physical_repository/
-        """
-        repository = self.get_object()
-
-        # Проверяем, существует ли уже физический репозиторий
-        repo_uuid = str(repository.public_id)
-        base_path = os.path.join(MEDIA_ROOT, 'version_management', repo_uuid)
-
-        if os.path.exists(base_path):
-            return Response({
-                "success": False,
-                "message": "Физический репозиторий уже существует",
-                "path": base_path
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            # Создаем структуру
-            os.makedirs(base_path, exist_ok=True)
-            api_path = os.path.join(base_path, 'api')
-            client_path = os.path.join(base_path, 'client')
-            os.makedirs(api_path, exist_ok=True)
-            os.makedirs(client_path, exist_ok=True)
-
-            # Создаем папки для веток
-            branches = repository.branches.all()
-            for branch in branches:
-                branch_path = os.path.join(base_path, branch.name)
-                os.makedirs(branch_path, exist_ok=True)
-
-            # Создаем файлы
-            self._create_repository_files(repository, base_path)
-
-            return Response({
-                "success": True,
-                "message": "Физический репозиторий успешно создан",
-                "repository": {
-                    "id": repository.id,
-                    "public_id": repository.public_id,
-                    "name": repository.name
-                },
-                "physical_path": base_path,
-                "structure": {
-                    "root": base_path,
-                    "api": api_path,
-                    "client": client_path,
-                    "manifest": os.path.join(base_path, 'manifest.json'),
-                    "readme": os.path.join(base_path, 'README.md'),
-                    "gitignore": os.path.join(base_path, '.gitignore'),
-                    "branches": [{"name": b.name, "path": os.path.join(base_path, b.name)} for b in branches]
-                }
-            }, status=status.HTTP_201_CREATED)
-
-        except Exception as e:
-            # Если ошибка, удаляем созданные папки
-            import shutil
-            if os.path.exists(base_path):
-                shutil.rmtree(base_path)
-
-            return Response({
-                "success": False,
-                "message": f"Ошибка при создании физического репозитория: {str(e)}"
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=True, methods=['get'])
-    def physical_structure(self, request, public_id=None):
-        """
-        Получить информацию о физической структуре репозитория.
-        GET /repositories/{public_id}/physical_structure/
-        """
-        repository = self.get_object()
-        repo_uuid = str(repository.public_id)
-        base_path = os.path.join(MEDIA_ROOT, 'version_management', repo_uuid)
-
-        exists = os.path.exists(base_path)
-
-        data = {
-            "repository": {
-                "id": repository.id,
-                "public_id": repository.public_id,
-                "name": repository.name
-            },
-            "physical_repository": {
-                "exists": exists,
-                "path": base_path if exists else None
-            }
-        }
-
-        if exists:
-            # Собираем информацию о файлах и папках
-            import glob
-            data["physical_repository"]["structure"] = {
-                "root": base_path,
-                "directories": [d for d in os.listdir(base_path) if os.path.isdir(os.path.join(base_path, d))],
-                "files": [f for f in os.listdir(base_path) if os.path.isfile(os.path.join(base_path, f))]
-            }
-
-        return Response(data)
 
     @action(detail=True, methods=['post'])
     def set_default_branch(self, request, public_id=None):
