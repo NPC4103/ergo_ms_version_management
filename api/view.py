@@ -1,7 +1,8 @@
-# view.py
 from rest_framework import viewsets, status, mixins
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
 from django.shortcuts import get_object_or_404
 from django.http import Http404
 import os
@@ -15,7 +16,7 @@ import shutil
 import hashlib
 import uuid as uuid_lib
 
-from .models import Repository, Branch
+from .models import Repository, Branch, Collaborator
 from .serializers import (
     RepositorySerializer,
     RepositoryCreateSerializer,
@@ -23,20 +24,38 @@ from .serializers import (
     BranchSerializer,
     BranchCreateSerializer,
     SetDefaultBranchSerializer,
-    BranchListSerializer
+    BranchListSerializer,
+    CollaboratorSerializer,
+    CollaboratorCreateSerializer
 )
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 MEDIA_ROOT = BASE_DIR / 'media'
+
 
 class RepositoryViewSet(viewsets.ModelViewSet):
     """
     ViewSet для управления репозиториями.
     Поддерживает поиск по public_id через lookup_field.
     """
+    #permission_classes = [IsAuthenticated]
+    permission_classes = []
     queryset = Repository.objects.all()
-    lookup_field = 'public_id'  # Используем public_id вместо id для API
-    lookup_url_kwarg = 'public_id'  # Параметр в URL
+    lookup_field = 'public_id'
+    lookup_url_kwarg = 'public_id'
+
+    def get_queryset(self):
+        """Возвращаем только репозитории, доступные текущему пользователю"""
+        queryset = super().get_queryset()
+        user_id = self.request.user.id
+        
+        # Фильтруем репозитории по правам доступа
+        accessible_repos = []
+        for repo in queryset:
+            if repo.can_user_view(user_id):
+                accessible_repos.append(repo.id)
+        
+        return queryset.filter(id__in=accessible_repos)
 
     def get_serializer_class(self):
         """Выбираем сериализатор в зависимости от действия"""
@@ -46,14 +65,12 @@ class RepositoryViewSet(viewsets.ModelViewSet):
             return RepositoryUpdateSerializer
         return RepositorySerializer
 
-    # Добавьте этот метод в класс RepositoryViewSet в view.py
-
     def create(self, request, *args, **kwargs):
         """
         Создание репозитория с физической папкой в файловой системе.
         POST /api/version_management/repositories/
         """
-        serializer = RepositoryCreateSerializer(data=request.data)
+        serializer = RepositoryCreateSerializer(data=request.data, context={'request': request})
         
         if serializer.is_valid():
             try:
@@ -111,6 +128,9 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                         f.write(f"{repository.description or 'No description provided.'}\n\n")
                         f.write(f"Created: {repository.created_at}\n")
                         f.write(f"UUID: {repo_uuid}\n")
+                        f.write(f"Owner: User #{repository.owner_id}\n")
+                        f.write(f"Private: {repository.is_private}\n")
+                        f.write(f"Read-only: {repository.is_read_only}\n")
                     
                     # Создаем файл с метаинформацией о репозитории
                     repo_info_path = os.path.join(repo_path, '.repo_info.json')
@@ -118,6 +138,9 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                         'uuid': repo_uuid,
                         'name': repository.name,
                         'description': repository.description,
+                        'is_private': repository.is_private,
+                        'is_read_only': repository.is_read_only,
+                        'owner_id': repository.owner_id,
                         'created_at': repository.created_at.isoformat(),
                         'branches': [
                             {
@@ -135,7 +158,7 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                     print(f"--- [INFO] Физическая структура репозитория создана успешно ---")
                     
                     # Добавляем информацию о физическом пути в ответ
-                    response_data = RepositorySerializer(repository).data
+                    response_data = RepositorySerializer(repository, context={'request': request}).data
                     response_data['physical_path'] = repo_path
                     response_data['physical_structure_created'] = True
                     
@@ -159,13 +182,16 @@ class RepositoryViewSet(viewsets.ModelViewSet):
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-
     @action(detail=True, methods=['post'])
     def set_default_branch(self, request, public_id=None):
         """
         Установить ветку по умолчанию для репозитория.
         """
         repository = self.get_object()
+        
+        # Проверяем права доступа
+        if not repository.can_user_modify(request.user.id):
+            raise PermissionDenied("У вас недостаточно прав для изменения этого репозитория")
 
         branch_id = request.data.get('branch_id')
         branch_name = request.data.get('branch_name')
@@ -192,7 +218,7 @@ class RepositoryViewSet(viewsets.ModelViewSet):
         return Response({
             'success': True,
             'message': f'Ветка "{branch.name}" установлена как ветка по умолчанию',
-            'repository': self.get_serializer(repository).data,
+            'repository': self.get_serializer(repository, context={'request': request}).data,
             'branch': {
                 'id': branch.id,
                 'name': branch.name,
@@ -207,9 +233,14 @@ class RepositoryViewSet(viewsets.ModelViewSet):
         GET /repositories/{public_id}/branches/
         """
         repository = self.get_object()
+        
+        # Проверяем права доступа на просмотр
+        if not repository.can_user_view(request.user.id):
+            raise PermissionDenied("У вас нет доступа к этому репозиторию")
+        
         branches = repository.branches.all()
 
-        serializer = BranchListSerializer(branches, many=True)
+        serializer = BranchListSerializer(branches, many=True, context={'request': request})
 
         return Response({
             'repository': {
@@ -229,21 +260,28 @@ class RepositoryViewSet(viewsets.ModelViewSet):
         print(f"--- [INFO] Попытка удаления репозитория с UUID: {public_id} ---")
 
         # 1. Пытаемся найти объект
-        # Так как lookup_field = 'public_id', get_object() сам использует этот UUID
         instance = self.get_object()
+        
+        # Проверяем, что пользователь является владельцем
+        if instance.owner_id != request.user.id:
+            # Проверяем, является ли пользователь администратором
+            admin_collaborator = instance.collaborators.filter(
+                user_id=request.user.id,
+                role='admin'
+            ).first()
+            if not admin_collaborator:
+                raise PermissionDenied("Только владелец или администратор может удалить репозиторий")
 
         repo_name = instance.name
         repo_uuid = str(instance.public_id)
 
         # 2. Формируем путь к папке (media/version_management/UUID)
-        # В твоем файле MEDIA_ROOT уже определен через Path
         repo_path = os.path.join(MEDIA_ROOT, 'version_management', repo_uuid)
 
         print(f"--- [INFO] Путь к файлам: {repo_path} ---")
 
         try:
             # 3. Удаляем из базы данных
-            # Ветки (Branch) удалятся каскадом сами
             instance.delete()
             print(f"--- [INFO] Запись в БД удалена успешно ---")
 
@@ -279,6 +317,10 @@ class RepositoryViewSet(viewsets.ModelViewSet):
         в существующий, до тех пор пока коммит не отправлен на сервер (push).
         """
         repository = self.get_object()
+        
+        # Проверяем права на запись
+        if not repository.can_user_modify(request.user.id):
+            raise PermissionDenied("У вас недостаточно прав для создания коммитов в этом репозитории")
 
         # Получаем данные из запроса
         message = request.data.get('message')
@@ -318,7 +360,6 @@ class RepositoryViewSet(viewsets.ModelViewSet):
 
         try:
             # Путь к папке ветки
-            # Коммиты хранятся в media/version_management/{uuid}/branches/{branch_name}/
             repo_uuid = str(repository.public_id)
             base_path = os.path.join(MEDIA_ROOT, 'version_management', repo_uuid)
             branches_path = os.path.join(base_path, 'branches')
@@ -358,6 +399,7 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                 pending_commit['files'] = list(existing_files.values())
                 pending_commit['updated_at'] = datetime.now().isoformat()
                 pending_commit['message'] = message  # Обновляем сообщение
+                pending_commit['author'] = f"User #{request.user.id}"  # Добавляем автора
 
                 commit_hash = pending_commit.get('hash')
                 is_new_commit = False
@@ -369,6 +411,7 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                     'message': message,
                     'branch': branch.name,
                     'repository_uuid': repo_uuid,
+                    'author': f"User #{request.user.id}",
                     'files': [
                         {
                             'path': f.get('path'),
@@ -399,7 +442,8 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                     'branch': branch.name,
                     'files_count': len(pending_commit['files']),
                     'is_new': is_new_commit,
-                    'pushed': False
+                    'pushed': False,
+                    'author': pending_commit.get('author')
                 }
             }, status=status.HTTP_201_CREATED if is_new_commit else status.HTTP_200_OK)
 
@@ -418,6 +462,10 @@ class RepositoryViewSet(viewsets.ModelViewSet):
         Возвращает список всех коммитов из всех веток, отсортированных по дате (новые первыми).
         """
         repository = self.get_object()
+        
+        # Проверяем права на просмотр
+        if not repository.can_user_view(request.user.id):
+            raise PermissionDenied("У вас нет доступа к этому репозиторию")
 
         try:
             repo_uuid = str(repository.public_id)
@@ -465,7 +513,7 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                                 'created_at': pending_commit.get('created_at', ''),
                                 'updated_at': pending_commit.get('updated_at', ''),
                                 'pushed': False,
-                                'author': pending_commit.get('author', 'Unknown')
+                                'author': pending_commit.get('author', f'User #{request.user.id}')
                             }
                             all_commits.append(commit_data)
                     except (json.JSONDecodeError, IOError) as e:
@@ -556,6 +604,10 @@ class RepositoryViewSet(viewsets.ModelViewSet):
         created_at, files и т.п.) из commit.json или pending_commit.json.
         """
         repository = self.get_object()
+        
+        # Проверяем права на просмотр
+        if not repository.can_user_view(request.user.id):
+            raise PermissionDenied("У вас нет доступа к этому репозиторию")
 
         repo_uuid = str(repository.public_id)
         base_path = os.path.join(MEDIA_ROOT, 'version_management', repo_uuid)
@@ -619,6 +671,10 @@ class RepositoryViewSet(viewsets.ModelViewSet):
         Для новых файлов: --- /dev/null, для удалённых: +++ /dev/null.
         """
         repository = self.get_object()
+        
+        # Проверяем права на просмотр
+        if not repository.can_user_view(request.user.id):
+            raise PermissionDenied("У вас нет доступа к этому репозиторию")
 
         repo_uuid = str(repository.public_id)
         base_path = os.path.join(MEDIA_ROOT, 'version_management', repo_uuid)
@@ -761,12 +817,154 @@ class RepositoryViewSet(viewsets.ModelViewSet):
 
         # Генерируем хеш
         hash_obj = hashlib.sha256(content.encode('utf-8'))
-        return hash_obj.hexdigest()[:16]  # Первые 16 символов хеша
+        return hash_obj.hexdigest()[:16]
+
+    @action(detail=True, methods=['get', 'post', 'delete'], url_path='collaborators')
+    def collaborators(self, request, public_id=None):
+        """
+        Управление коллабораторами репозитория.
+        GET: Получить список коллабораторов
+        POST: Добавить нового коллаборатора
+        DELETE: Удалить коллаборатора
+        """
+        repository = self.get_object()
+        
+        # Проверяем права на управление коллабораторами
+        if request.user.id != repository.owner_id:
+            # Проверяем, является ли пользователь администратором
+            admin_collaborator = repository.collaborators.filter(
+                user_id=request.user.id,
+                role='admin'
+            ).first()
+            if not admin_collaborator:
+                raise PermissionDenied("Только владелец или администратор может управлять коллабораторами")
+        
+        if request.method == 'GET':
+            # Получаем список коллабораторов
+            collaborators = repository.collaborators.all()
+            serializer = CollaboratorSerializer(collaborators, many=True)
+            return Response({
+                'repository': {
+                    'id': repository.id,
+                    'public_id': repository.public_id,
+                    'name': repository.name
+                },
+                'collaborators': serializer.data,
+                'count': collaborators.count()
+            })
+        
+        elif request.method == 'POST':
+            # Добавляем нового коллаборатора
+            serializer = CollaboratorCreateSerializer(
+                data=request.data,
+                context={'request': request, 'repository': repository}
+            )
+            
+            if serializer.is_valid():
+                # Создаем коллаборатора
+                collaborator = Collaborator.objects.create(
+                    repository=repository,
+                    user_id=serializer.validated_data['user_id'],
+                    role=serializer.validated_data['role']
+                )
+                
+                # Сериализуем ответ
+                response_serializer = CollaboratorSerializer(collaborator)
+                
+                return Response({
+                    'success': True,
+                    'message': 'Коллаборатор успешно добавлен',
+                    'collaborator': response_serializer.data
+                }, status=status.HTTP_201_CREATED)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        elif request.method == 'DELETE':
+            # Удаляем коллаборатора
+            user_id = request.data.get('user_id')
+            
+            if not user_id:
+                return Response({
+                    'error': 'Необходимо указать user_id'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Нельзя удалить владельца
+            if user_id == repository.owner_id:
+                return Response({
+                    'error': 'Нельзя удалить владельца репозитория'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Находим и удаляем коллаборатора
+            collaborator = repository.collaborators.filter(user_id=user_id).first()
+            
+            if not collaborator:
+                return Response({
+                    'error': 'Коллаборатор не найден'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            collaborator.delete()
+            
+            return Response({
+                'success': True,
+                'message': 'Коллаборатор успешно удален'
+            })
+    
+    @action(detail=True, methods=['post'], url_path='collaborators/(?P<collaborator_id>[^/.]+)')
+    def update_collaborator(self, request, public_id=None, collaborator_id=None):
+        """
+        Обновление роли коллаборатора.
+        """
+        repository = self.get_object()
+        
+        # Проверяем права на управление коллабораторами
+        if request.user.id != repository.owner_id:
+            # Проверяем, является ли пользователь администратором
+            admin_collaborator = repository.collaborators.filter(
+                user_id=request.user.id,
+                role='admin'
+            ).first()
+            if not admin_collaborator:
+                raise PermissionDenied("Только владелец или администратор может обновлять коллабораторов")
+        
+        # Находим коллаборатора
+        try:
+            collaborator = Collaborator.objects.get(id=collaborator_id, repository=repository)
+        except Collaborator.DoesNotExist:
+            return Response({
+                'error': 'Коллаборатор не найден'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Обновляем роль
+        new_role = request.data.get('role')
+        
+        if not new_role:
+            return Response({
+                'error': 'Необходимо указать новую роль'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if new_role not in ['read', 'write', 'admin']:
+            return Response({
+                'error': 'Некорректная роль. Допустимые значения: read, write, admin'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        collaborator.role = new_role
+        collaborator.save()
+        
+        serializer = CollaboratorSerializer(collaborator)
+        
+        return Response({
+            'success': True,
+            'message': 'Роль коллаборатора обновлена',
+            'collaborator': serializer.data
+        })
+
 
 class BranchViewSet(viewsets.ModelViewSet):
     """
     ViewSet для управления ветками.
     """
+    #permission_classes = [IsAuthenticated]
+    permission_classes = []
     queryset = Branch.objects.all()
 
     def get_serializer_class(self):
@@ -777,39 +975,86 @@ class BranchViewSet(viewsets.ModelViewSet):
             return BranchListSerializer
         return BranchSerializer
 
+    def get_queryset(self):
+        """Фильтрация веток по доступным репозиториям"""
+        queryset = super().get_queryset()
+        user_id = self.request.user.id
+        
+        # Фильтруем только ветки из репозиториев, доступных пользователю
+        accessible_repos = []
+        for repo in Repository.objects.all():
+            if repo.can_user_view(user_id):
+                accessible_repos.append(repo.id)
+        
+        return queryset.filter(repository_id__in=accessible_repos)
+
     def create(self, request, *args, **kwargs):
         """
         Создать ветку и соответствующую папку в файловой системе
         """
-        response = super().create(request, *args, **kwargs)
-
-        if response.status_code == status.HTTP_201_CREATED:
+        serializer = self.get_serializer(data=request.data, context={'request': request})
+        
+        if serializer.is_valid():
+            branch = serializer.save()
+            
+            # Добавляем информацию о физическом пути
             try:
-                # Получаем созданную ветку
-                branch_id = response.data.get('id')
-                branch = Branch.objects.get(id=branch_id)
                 repository = branch.repository
-
-                # Проверяем, существует ли физический репозиторий
                 repo_uuid = str(repository.public_id)
                 base_path = os.path.join(MEDIA_ROOT, 'version_management', repo_uuid)
-
+                
                 if os.path.exists(base_path):
                     # Создаем папку для ветки
                     branch_path = os.path.join(base_path, branch.name)
                     os.makedirs(branch_path, exist_ok=True)
-
-                    # Добавляем информацию в ответ
-                    response.data['physical_path'] = branch_path
-                    response.data['physical_created'] = True
+                    
+                    # Создаем подпапку для коммитов
+                    commits_path = os.path.join(branch_path, 'commits')
+                    os.makedirs(commits_path, exist_ok=True)
+                    
+                    response_data = BranchSerializer(branch, context={'request': request}).data
+                    response_data['physical_path'] = branch_path
+                    response_data['physical_created'] = True
                 else:
-                    response.data['physical_created'] = False
-                    response.data['message'] = 'Физический репозиторий не существует, папка ветки не создана'
-
+                    response_data = BranchSerializer(branch, context={'request': request}).data
+                    response_data['physical_created'] = False
+                    response_data['message'] = 'Физический репозиторий не существует, папка ветки не создана'
+            
             except Exception as e:
                 print(f"Warning: Could not create physical folder for branch: {e}")
+                response_data = BranchSerializer(branch, context={'request': request}).data
+                response_data['physical_created'] = False
+                response_data['warning'] = str(e)
+            
+            return Response(response_data, status=status.HTTP_201_CREATED)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        return response
+    def update(self, request, *args, **kwargs):
+        """Обновление ветки с проверкой прав"""
+        branch = self.get_object()
+        
+        # Проверяем права на изменение репозитория
+        if not branch.repository.can_user_modify(request.user.id):
+            raise PermissionDenied("У вас недостаточно прав для изменения этой ветки")
+        
+        return super().update(request, *args, **kwargs)
+    
+    def destroy(self, request, *args, **kwargs):
+        """Удаление ветки с проверкой прав"""
+        branch = self.get_object()
+        
+        # Проверяем права на изменение репозитория
+        if not branch.repository.can_user_modify(request.user.id):
+            raise PermissionDenied("У вас недостаточно прав для удаления этой ветки")
+        
+        # Нельзя удалить ветку по умолчанию
+        if branch.is_default:
+            return Response({
+                'error': 'Нельзя удалить ветку по умолчанию'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        return super().destroy(request, *args, **kwargs)
 
     def get_queryset(self):
         """Фильтрация веток по репозиторию"""
@@ -834,7 +1079,7 @@ class BranchViewSet(viewsets.ModelViewSet):
         """
         Установить ветку по умолчанию.
         """
-        serializer = SetDefaultBranchSerializer(data=request.data)
+        serializer = SetDefaultBranchSerializer(data=request.data, context={'request': request})
 
         if serializer.is_valid():
             branch = serializer.validated_data['branch']
@@ -862,6 +1107,11 @@ class BranchViewSet(viewsets.ModelViewSet):
         Сделать текущую ветку веткой по умолчанию.
         """
         branch = self.get_object()
+        
+        # Проверяем права на изменение репозитория
+        if not branch.repository.can_user_modify(request.user.id):
+            raise PermissionDenied("У вас недостаточно прав для изменения этой ветки")
+        
         Branch.set_default_branch(branch)
 
         return Response({
@@ -873,4 +1123,193 @@ class BranchViewSet(viewsets.ModelViewSet):
                 'is_default': branch.is_default
             }
         })
+
+
+class CollaboratorViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet для управления коллабораторами репозиториев.
+    """
+    #permission_classes = [IsAuthenticated]
+    permission_classes = []
+    queryset = Collaborator.objects.all()
+    serializer_class = CollaboratorSerializer
+    
+    def get_queryset(self):
+        """Фильтрация коллабораторов по доступным репозиториям"""
+        queryset = super().get_queryset()
+        user_id = self.request.user.id
         
+        # Фильтруем только коллабораторов из репозиториев, где пользователь является владельцем или администратором
+        accessible_collaborators = []
+        
+        for collaborator in queryset:
+            repository = collaborator.repository
+            
+            # Проверяем, является ли текущий пользователь владельцем или администратором
+            if user_id == repository.owner_id:
+                accessible_collaborators.append(collaborator.id)
+            else:
+                admin_collaborator = repository.collaborators.filter(
+                    user_id=user_id,
+                    role='admin'
+                ).first()
+                if admin_collaborator:
+                    accessible_collaborators.append(collaborator.id)
+        
+        return queryset.filter(id__in=accessible_collaborators)
+    
+    def create(self, request, *args, **kwargs):
+        """
+        Создание коллаборатора.
+        Требуется указать repository_public_id в запросе.
+        """
+        repository_public_id = request.data.get('repository_public_id')
+        
+        if not repository_public_id:
+            return Response({
+                'error': 'Необходимо указать repository_public_id'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            repository = Repository.objects.get(public_id=repository_public_id)
+        except Repository.DoesNotExist:
+            return Response({
+                'error': 'Репозиторий не найден'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Проверяем права на управление коллабораторами
+        if request.user.id != repository.owner_id:
+            # Проверяем, является ли пользователь администратором
+            admin_collaborator = repository.collaborators.filter(
+                user_id=request.user.id,
+                role='admin'
+            ).first()
+            if not admin_collaborator:
+                raise PermissionDenied("Только владелец или администратор может добавлять коллабораторов")
+        
+        # Используем сериализатор для создания коллаборатора
+        serializer = CollaboratorCreateSerializer(
+            data=request.data,
+            context={'request': request, 'repository': repository}
+        )
+        
+        if serializer.is_valid():
+            # Создаем коллаборатора
+            collaborator = Collaborator.objects.create(
+                repository=repository,
+                user_id=serializer.validated_data['user_id'],
+                role=serializer.validated_data['role']
+            )
+            
+            # Сериализуем ответ
+            response_serializer = CollaboratorSerializer(collaborator)
+            
+            return Response({
+                'success': True,
+                'message': 'Коллаборатор успешно добавлен',
+                'collaborator': response_serializer.data
+            }, status=status.HTTP_201_CREATED)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    def update(self, request, *args, **kwargs):
+        """Обновление роли коллаборатора"""
+        collaborator = self.get_object()
+        repository = collaborator.repository
+        
+        # Проверяем права на управление коллабораторами
+        if request.user.id != repository.owner_id:
+            # Проверяем, является ли пользователь администратором
+            admin_collaborator = repository.collaborators.filter(
+                user_id=request.user.id,
+                role='admin'
+            ).first()
+            if not admin_collaborator:
+                raise PermissionDenied("Только владелец или администратор может обновлять коллабораторов")
+        
+        # Обновляем только роль
+        new_role = request.data.get('role')
+        
+        if not new_role:
+            return Response({
+                'error': 'Необходимо указать новую роль'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if new_role not in ['read', 'write', 'admin']:
+            return Response({
+                'error': 'Некорректная роль. Допустимые значения: read, write, admin'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        collaborator.role = new_role
+        collaborator.save()
+        
+        serializer = CollaboratorSerializer(collaborator)
+        
+        return Response({
+            'success': True,
+            'message': 'Роль коллаборатора обновлена',
+            'collaborator': serializer.data
+        })
+    
+    def destroy(self, request, *args, **kwargs):
+        """Удаление коллаборатора"""
+        collaborator = self.get_object()
+        repository = collaborator.repository
+        
+        # Проверяем права на управление коллабораторами
+        if request.user.id != repository.owner_id:
+            # Проверяем, является ли пользователь администратором
+            admin_collaborator = repository.collaborators.filter(
+                user_id=request.user.id,
+                role='admin'
+            ).first()
+            if not admin_collaborator:
+                raise PermissionDenied("Только владелец или администратор может удалять коллабораторов")
+        
+        # Нельзя удалить владельца
+        if collaborator.user_id == repository.owner_id:
+            return Response({
+                'error': 'Нельзя удалить владельца репозитория'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        collaborator.delete()
+        
+        return Response({
+            'success': True,
+            'message': 'Коллаборатор успешно удален'
+        })
+    
+    @action(detail=False, methods=['get'])
+    def by_repository(self, request):
+        """Получить коллабораторов по репозиторию"""
+        repository_public_id = request.query_params.get('repository_public_id')
+        
+        if not repository_public_id:
+            return Response({
+                'error': 'Необходимо указать repository_public_id'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            repository = Repository.objects.get(public_id=repository_public_id)
+        except Repository.DoesNotExist:
+            return Response({
+                'error': 'Репозиторий не найден'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Проверяем права на просмотр коллабораторов
+        user_id = request.user.id
+        if not repository.can_user_view(user_id):
+            raise PermissionDenied("У вас нет доступа к этому репозиторию")
+        
+        collaborators = repository.collaborators.all()
+        serializer = CollaboratorSerializer(collaborators, many=True)
+        
+        return Response({
+            'repository': {
+                'id': repository.id,
+                'public_id': repository.public_id,
+                'name': repository.name
+            },
+            'collaborators': serializer.data,
+            'count': collaborators.count()
+        })

@@ -1,7 +1,9 @@
+from email.policy import default
 from django.db import models
 import uuid
 from django.core.validators import MinLengthValidator
 from django.core.exceptions import ValidationError
+from django.db.models import indexes
 
 
 class Repository(models.Model):
@@ -26,6 +28,19 @@ class Repository(models.Model):
         unique=True
     )
     description = models.TextField(blank=True)
+
+    is_private = models.BooleanField(
+        default=False,
+        help_text="Приватный репозиторий (только для владельца и коллабораторов)"
+    )
+    is_read_only = models.BooleanField(
+        default=False,
+        help_text="Режим только для чтения (для всех пользователей)"
+    )
+    # Владелец репозитория
+    owner_id = models.IntegerField(
+        help_text="ID пользователя-владельца репозитория"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -37,6 +52,8 @@ class Repository(models.Model):
         indexes = [
             models.Index(fields=['public_id']),
             models.Index(fields=['created_at']),
+            models.Index(fields=['owner_id']),
+            models.Index(fields=['is_private']),
         ]
     
     def __str__(self):
@@ -55,6 +72,97 @@ class Repository(models.Model):
         # Автоматически генерируем public_id если он не установлен
         if not self.public_id:
             self.public_id = uuid.uuid4()
+        self.clean()
+        super().save(*args, **kwargs)
+
+
+
+    def can_user_modify(self, user_id):
+        '''Проверяет, может ли пользователь изменять репозиторий'''
+        if user_id == self.owner_id:
+            return True # Владелец всегда может изменять
+
+        if self.is_read_only:
+            return False # Режим только для чтения
+
+        # Проверяем, есть ли пользователь среди коллабораторов с правами на запись
+        collaborator = self.collaborators.filter(user_id=user_id).first()
+        if collaborator:
+            return collaborator.role in ['write', 'admin']
+        return False
+
+    def can_user_view(self, user_id):
+        '''Проверяет, может ли пользователь просматривать репозиторий'''
+        if not self.is_private:
+            return True # Публичный репозиторий виден всем
+
+        if user_id == self.owner_id:
+            return True  # Владелец всегда может просматривать
+
+        # Проверяем, есть ли пользователь среди коллабораторов
+        return self.collaborators.filter(user_id=user_id).exists()
+
+    def get_user_role(self, user_id):
+        """Возвращает роль пользователя в репозитории"""
+        if user_id == self.owner_id:
+            return 'owner'
+
+        collaborator = self.collaborators.filter(user_id=user_id).first()
+        if collaborator:
+            return collaborator.role
+        return None
+
+class Collaborator(models.Model):
+    """
+    Коллаборатор репозитория - пользователь с определенными правами доступа.
+    """
+    ROLE_CHOICES = [
+        ('read', 'Чтение'),
+        ('write', 'Запись'),
+        ('admin', 'Администратор'),
+    ]
+
+    repository = models.ForeignKey(
+        Repository,
+        on_delete=models.CASCADE,
+        related_name='collaborators'
+    )
+    user_id = models.IntegerField(
+        help_text="ID пользователя-коллаборатора"
+    )
+    role = models.CharField(
+        max_length=20,
+        choices=ROLE_CHOICES,
+        default='write',
+        help_text="Роль коллаборатора в репозитории"
+    )
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'collaborators'
+        verbose_name_plural = 'Collaborators'
+        app_label = 'version_management'
+        ordering = ['-added_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['repository', 'user_id'],
+                name='unique_collaborator_per_repository'
+            )
+        ]
+        indexes = [
+            models.Index(fields=['repository', 'user_id']),
+            models.Index(fields=['user_id']),
+        ]
+    def __str__(self):
+        return f"Коллаборатор {self.user_id} в {self.repository.name}"
+
+    def clean(self):
+        """Валидация роли коллаборатора"""
+        if self.role not in dict(self.ROLE_CHOICES):
+            raise ValidationError({'role': 'Некорректная роль коллаборатора'})
+    
+    def save(self, *args, **kwargs):
+        """Сохранение с валидацией"""
         self.clean()
         super().save(*args, **kwargs)
 
