@@ -116,7 +116,7 @@ const loadItems = async () => {
   loading.value = true;
 
   try {
-    const response = await apiClient.get(versionManagementEndpoints.version_management.list, {
+    const response = await apiClient.get(versionManagementEndpoints.repositories.list, {
       params: {
         page: params.current_page,
         page_size: params.pagesize,
@@ -145,7 +145,7 @@ const loadItems = async () => {
 const deleteRepo = async (id) => {
     if(!confirm('Вы уверены, что хотите удалить этот репозиторий?')) return;
     try {
-        await apiClient.delete(versionManagementEndpoints.version_management.delete(id));
+        await apiClient.delete(versionManagementEndpoints.repositories.delete(id));
         toast.success('Репозиторий удален');
         loadItems();
     } catch (error) {

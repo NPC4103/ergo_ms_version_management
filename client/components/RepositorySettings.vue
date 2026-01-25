@@ -83,7 +83,7 @@ const form = reactive({
 onMounted(async () => {
   loading.value = true;
   try {
-    const response = await apiClient.get(versionManagementEndpoints.version_management.retrieve(repoId));
+    const response = await apiClient.get(versionManagementEndpoints.repositories.retrieve(repoId));
     if (response.success) {
       repo.value = response.data;
       form.name = response.data.name || '';
@@ -97,7 +97,7 @@ onMounted(async () => {
 const saveSettings = async () => {
   saving.value = true;
   try {
-    await apiClient.patch(versionManagementEndpoints.version_management.update(repoId), {
+    await apiClient.patch(versionManagementEndpoints.repositories.update(repoId), {
       name: form.name,
       description: form.description
     });
@@ -123,7 +123,7 @@ const deleteRepo = async () => {
   if (!confirm('Удалить репозиторий? Это необратимо!')) return;
   deleting.value = true;
   try {
-    await apiClient.delete(versionManagementEndpoints.version_management.delete(repoId));
+    await apiClient.delete(versionManagementEndpoints.repositories.delete(repoId));
     toast.success('Репозиторий удален');
     router.push({ name: 'RepositoryList' });
   } catch { toast.error('Ошибка удаления'); }

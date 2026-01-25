@@ -250,7 +250,7 @@ onUnmounted(() => { document.removeEventListener('click', handleClickOutside); }
 const loadRepo = async () => {
   loading.value = true;
   try {
-    const response = await apiClient.get(versionManagementEndpoints.version_management.retrieve(repoId));
+    const response = await apiClient.get(versionManagementEndpoints.repositories.retrieve(repoId));
     if (response.success) repo.value = response.data;
     else toast.error(response.message || 'Ошибка загрузки');
   } catch (e) { toast.error('Ошибка сети'); console.error(e); }

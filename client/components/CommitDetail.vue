@@ -59,7 +59,7 @@ const formatDate = (dateString) => {
 const loadCommit = async () => {
     loading.value = true;
     try {
-        const response = await apiClient.get(versionManagementEndpoints.version_management.commit_retrieve(repoId, commitHash));
+        const response = await apiClient.get(versionManagementEndpoints.repositories.commitRetrieve(repoId, commitHash));
         if (response.success) {
             commit.value = response.data;
         } else {
@@ -76,7 +76,7 @@ const loadDiff = async () => {
     loadingDiff.value = true;
     try {
         // According to specs, returns raw diff string
-        const response = await apiClient.get(versionManagementEndpoints.version_management.commit_diff(repoId, commitHash));
+        const response = await apiClient.get(versionManagementEndpoints.repositories.commitDiff(repoId, commitHash));
         if (response.success) {
             diff.value = response.data; // Assuming data contains the string directly or field
         } 

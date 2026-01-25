@@ -1,11 +1,62 @@
+const API_PREFIX = 'version_management';
+
 export const versionManagementEndpoints = {
-    version_management: {
-        list: '/version_management/repositories/', 
-        create: '/version_management/repositories/',
-        retrieve: id => `/version_management/repositories/${id}/`,
-        update: id => `/version_management/repositories/${id}/`,
-        delete: id => `/version_management/repositories/${id}/`,
-        commits_list: id => `/version_management/repositories/${id}/commits/`,
-        commit_create: id => `/version_management/repositories/${id}/commits/`,
-    }
+    repositories: {
+        list: `${API_PREFIX}/repositories/`,
+        create: `${API_PREFIX}/repositories/`,
+        retrieve: (publicId) =>
+            `${API_PREFIX}/repositories/${publicId}/`,
+        update: (publicId) =>
+            `${API_PREFIX}/repositories/${publicId}/`,
+        delete: (publicId) =>
+            `${API_PREFIX}/repositories/${publicId}/`,
+
+        // custom actions
+        setDefaultBranch: (publicId) =>
+            `${API_PREFIX}/repositories/${publicId}/set_default_branch/`,
+        branches: (publicId) =>
+            `${API_PREFIX}/repositories/${publicId}/branches/`,
+        collaborators: (publicId) =>
+            `${API_PREFIX}/repositories/${publicId}/collaborators/`,
+
+        // commits
+        commitsList: (publicId) =>
+            `${API_PREFIX}/repositories/${publicId}/commits/`,
+        commitCreate: (publicId) =>
+            `${API_PREFIX}/repositories/${publicId}/commits/create/`,
+        commitRetrieve: (publicId, commitHash) =>
+            `${API_PREFIX}/repositories/${publicId}/commits/${commitHash}/`,
+        commitDiff: (publicId, commitHash) =>
+            `${API_PREFIX}/repositories/${publicId}/commits/${commitHash}/diff/`,
+    },
+
+    branches: {
+        list: `${API_PREFIX}/branches/`,
+        create: `${API_PREFIX}/branches/`,
+        retrieve: (id) =>
+            `${API_PREFIX}/branches/${id}/`,
+        update: (id) =>
+            `${API_PREFIX}/branches/${id}/`,
+        delete: (id) =>
+            `${API_PREFIX}/branches/${id}/`,
+
+        // custom actions
+        setDefaultGlobal: `${API_PREFIX}/branches/set_default/`,
+        makeDefault: (id) =>
+            `${API_PREFIX}/branches/${id}/make_default/`,
+    },
+
+    collaborators: {
+        list: `${API_PREFIX}/collaborators/`,
+        create: `${API_PREFIX}/collaborators/`,
+        retrieve: (id) =>
+            `${API_PREFIX}/collaborators/${id}/`,
+        update: (id) =>
+            `${API_PREFIX}/collaborators/${id}/`,
+        delete: (id) =>
+            `${API_PREFIX}/collaborators/${id}/`,
+
+        // custom actions
+        byRepository: `${API_PREFIX}/collaborators/by_repository/`,
+    },
 };

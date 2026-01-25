@@ -65,7 +65,7 @@ const createCommit = async () => {
 
     loading.value = true;
     try {
-        const response = await apiClient.post(versionManagementEndpoints.version_management.commit_create(repoId), {
+        const response = await apiClient.post(versionManagementEndpoints.repositories.commitCreate(repoId), {
             message: form.message
         });
 

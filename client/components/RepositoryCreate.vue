@@ -159,7 +159,7 @@ const createRepo = async () => {
     }
 
     loading.value = true;
-    console.log('Отправка данных на:', versionManagementEndpoints.version_management.create);
+    console.log('Отправка данных на:', versionManagementEndpoints.repositories.create);
 
     try {
         const payload = {
@@ -168,7 +168,7 @@ const createRepo = async () => {
             initial_branch_name: 'main'
         };
 
-        const response = await apiClient.post(versionManagementEndpoints.version_management.create, payload);
+        const response = await apiClient.post(versionManagementEndpoints.repositories.create, payload);
         
         // Проверяем наличие данных в ответе (для DRF это обычно объект созданного репозитория)
         if (response.data || response.id) { 

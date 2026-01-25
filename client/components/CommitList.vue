@@ -43,7 +43,7 @@ const loading = ref(false);
 const loadCommits = async () => {
     loading.value = true;
     try {
-        const response = await apiClient.get(versionManagementEndpoints.version_management.commits_list(props.repoId));
+        const response = await apiClient.get(versionManagementEndpoints.repositories.commitsList(props.repoId));
         if (response.success) {
             // Assuming flat list for now, backend might return tree
             commits.value = Array.isArray(response.data) ? response.data : (response.data.results || []);
