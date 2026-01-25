@@ -39,20 +39,11 @@ function Invoke-Clone {
 # ============================================================================
 function Invoke-Add {
   param([string[]]$Files)
-  # `create` пока не создаёт идентификационную папку/файл в рабочей директории,
-  # это нужно учитывать при тестировании
+  
   Write-Host "[DEBUG] Files count: $($Files.Count)" -ForegroundColor Gray
   Write-Host "[DEBUG] Files content: $($Files -join ', ')" -ForegroundColor Gray
 
-  # 1. Найти корень репозитория
-  $repoRoot = Find-RepositoryRoot
-  Write-Host "[DEBUG] RepoRoot: $repoRoot" -ForegroundColor Gray
-  if (-not $repoRoot) {
-    Write-Host "[ERROR] Не удалось найти репозиторий. Убедитесь, что вы находитесь в директории репозитория." -ForegroundColor Red
-    exit 1
-  }
-  
-  # 2. Получить UUID репозитория
+  # 1. Получить UUID репозитория (это автоматически найдет корень репозитория)
   $uuid = Get-CurrentRepositoryUuid
   Write-Host "[DEBUG] UUID: $uuid" -ForegroundColor Gray
   if (-not $uuid) {
@@ -60,36 +51,71 @@ function Invoke-Add {
     Write-Host "[INFO] Убедитесь, что репозиторий был клонирован или создан через команду clone/create." -ForegroundColor Yellow
     exit 1
   }
-  
-  # 3. Прочитать текущий staging area один раз для всех файлов
-  $staging = Get-StagingArea
-  if (-not $staging.repository_uuid) {
-    $staging.repository_uuid = $uuid
-  }
-  
-  # Инициализируем массив files, если он не существует или имеет неправильный тип
-  if (-not $staging.files -or $staging.files -isnot [System.Collections.ArrayList]) {
-    $staging.files = [System.Collections.ArrayList]@()
+
+  # 2. Определить корень репозитория из пути, который нашел Get-CurrentRepositoryUuid
+  $repoRoot = Find-LocalRepositoryRoot
+  Write-Host "[DEBUG] RepoRoot: $repoRoot" -ForegroundColor Gray
+  if (-not $repoRoot) {
+    Write-Host "[ERROR] Не удалось определить корень репозитория." -ForegroundColor Red
+    exit 1
   }
 
-  # 4. Обработать каждый файл из аргументов
+  # 3. Создать директорию .ergovcs, если она не существует
+  $ergovcsPath = Join-Path $repoRoot ".ergovcs"
+  if (-not (Test-Path $ergovcsPath)) {
+    New-Item -ItemType Directory -Path $ergovcsPath -Force | Out-Null
+    Write-Host "[INFO] Создана директория .ergovcs" -ForegroundColor Cyan
+  }
+
+  # 4. Прочитать текущий staging area или создать новый
+  $stagingFile = Join-Path $ergovcsPath "staging.json"
+  $staging = @{
+    repository_uuid = $uuid
+    files = [System.Collections.ArrayList]@()
+    pending_commit = $null
+  }
+
+  if (Test-Path $stagingFile) {
+    try {
+      $existingStaging = Get-Content $stagingFile -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
+      # Обновляем UUID на случай, если он изменился
+      $existingStaging.repository_uuid = $uuid
+      
+      # Копируем существующие данные
+      $staging.repository_uuid = $uuid
+      if ($existingStaging.files -and $existingStaging.files.Count -gt 0) {
+        $staging.files = [System.Collections.ArrayList]@($existingStaging.files)
+      }
+      if ($existingStaging.pending_commit) {
+        $staging.pending_commit = $existingStaging.pending_commit
+      }
+      
+      Write-Host "[DEBUG] Загружен существующий staging area" -ForegroundColor Gray
+    }
+    catch {
+      Write-Host "[WARNING] Не удалось прочитать существующий staging.json, создаем новый" -ForegroundColor Yellow
+    }
+  }
+
+  # 5. Обработать каждый файл из аргументов
   $hasErrors = $false
+  $addedFiles = @()
   
   foreach ($file in $Files) {
-    # 5. Пропустить пустые аргументы
+    # Пропустить пустые аргументы
     if ([string]::IsNullOrWhiteSpace($file)) {
       Write-Host "[WARNING] Пропущен пустой аргумент" -ForegroundColor Yellow
       continue
     }
     
-    # 6. Определить полный путь к файлу
+    # Определить полный путь к файлу
     $fullPath = if ([System.IO.Path]::IsPathRooted($file)) {
       $file
     } else {
       Join-Path (Get-Location).Path $file
     }
     
-    # 7. Проверить существование файла
+    # Проверить существование файла
     if (-not (Test-Path $fullPath)) {
       Write-Host "[ERROR] Файл не найден: $file" -ForegroundColor Red
       $hasErrors = $true
@@ -98,10 +124,11 @@ function Invoke-Add {
     
     Write-Host "[DEBUG] Original: $file | Full: $fullPath" -ForegroundColor Gray
     
-    # 8. Получить относительный путь от корня репозитория
+    # Получить относительный путь от корня репозитория
     $relativePath = [System.IO.Path]::GetRelativePath($repoRoot, $fullPath).Replace('\', '/')
-    
-    # 9. Прочитать содержимое файла
+    Write-Host "[DEBUG] RelativePath: $relativePath"
+
+    # Прочитать содержимое файла
     try {
       $fileContent = Get-Content $fullPath -Raw -Encoding UTF8
     }
@@ -111,54 +138,64 @@ function Invoke-Add {
       continue
     }
     
-    # 10. Определить действие файла
-    $action = Get-FileAction -FilePath $relativePath -RepoRoot $repoRoot
+    # Определить действие файла
+    $action = Get-FileAction -FilePath $relativePath -LocalPath $repoRoot
     
-    # 11. Проверить, не добавлен ли файл уже в staging
+    # Проверить, не добавлен ли файл уже в staging
     $fileExists = $false
+    $fileIndex = -1
 
     for ($j = 0; $j -lt $staging.files.Count; $j++) {
       if ($staging.files[$j].path -eq $relativePath) {
-        # Обновляем существующий файл
-        $staging.files[$j].action = $action
-        $staging.files[$j].content = $fileContent
         $fileExists = $true
+        $fileIndex = $j
         break
       }
     }
     
-    if (-not $fileExists) {
+    if ($fileExists) {
+      # Обновляем существующий файл
+      $staging.files[$fileIndex].action = $action
+      $staging.files[$fileIndex].content = $fileContent
+      Write-Host "[INFO] Файл обновлен в staging area: $relativePath" -ForegroundColor Cyan
+    } else {
       # Добавляем новый файл
-      $fileEntry = @{
+      $fileEntry = [ordered]@{
         path = $relativePath
         action = $action
         content = $fileContent
       }
       $null = $staging.files.Add($fileEntry)
       Write-Host "[OK] Файл добавлен в staging area: $relativePath" -ForegroundColor Green
+      $addedFiles += $relativePath
     }
   }
   
-  # 12. Сохранить staging area после обработки всех файлов
-  if ($hasErrors) {
-    if (Save-StagingArea -Staging $staging) {
-      Write-Host "[WARNING] Некоторые файлы не были добавлены, но staging area сохранен" -ForegroundColor Yellow
-      exit 1
-    } else {
-      Write-Host "[ERROR] Не удалось сохранить staging area" -ForegroundColor Red
-      exit 1
+  # 6. Сохранить staging area
+  try {
+    $jsonContent = $staging | ConvertTo-Json -Depth 10
+    Set-Content -Path $stagingFile -Value $jsonContent -Encoding UTF8 -Force
+    Write-Host "[INFO] Staging area сохранен: $stagingFile" -ForegroundColor Cyan
+    
+    if ($addedFiles.Count -gt 0) {
+      Write-Host "[OK] Успешно добавлено файлов: $($addedFiles.Count)" -ForegroundColor Green
+      foreach ($addedFile in $addedFiles) {
+        Write-Host "  - $addedFile" -ForegroundColor Gray
+      }
     }
-  } else {
-    if (Save-StagingArea -Staging $staging) {
-      Write-Host "[INFO] Все файлы были добавлены и staging area сохранен" -ForegroundColor Yellow
+    
+    if ($hasErrors) {
+      Write-Host "[WARNING] Некоторые файлы не были добавлены из-за ошибок" -ForegroundColor Yellow
       exit 1
     } else {
-      Write-Host "[ERROR] Не удалось сохранить staging area" -ForegroundColor Red
-      exit 1
+      exit 0
     }
   }
+  catch {
+    Write-Host "[ERROR] Не удалось сохранить staging area: $_" -ForegroundColor Red
+    exit 1
+  }
 }
-
 
 # ============================================================================
 # Создание коммита
@@ -166,25 +203,22 @@ function Invoke-Add {
 # Создаёт коммит с изменениями в папке media/version_management/<UUID>/
 # ============================================================================
 function Invoke-Commit {
-  param([string[]]$Message)
-  # `create` пока не создаёт идентификационную папку/файл в рабочей директории,
-  # это нужно учитывать при тестировании
-
+  param([string[]]$MessageArg)
   # 1. Получить сообщение коммита из аргумента -m
   $message = $null
   
-  for ($i = 0; $i -lt $Message.Count; $i++) {
-    switch ($Message[$i]) {
+  for ($i = 0; $i -lt $MessageArg.Count; $i++) {
+    switch ($MessageArg[$i]) {
       "-m" { 
         $i++
-        if ($i -lt $Message.Count) {
-          $message = $Message[$i]
+        if ($i -lt $MessageArg.Count) {
+          $message = $MessageArg[$i]
         }
       }
       "--message" { 
         $i++
-        if ($i -lt $Message.Count) {
-          $message = $Message[$i]
+        if ($i -lt $MessageArg.Count) {
+          $message = $MessageArg[$i]
         }
       }
       default {
@@ -199,14 +233,7 @@ function Invoke-Commit {
     exit 1
   }
   
-  # 2. Найти корень репозитория
-  $repoRoot = Find-RepositoryRoot
-  if (-not $repoRoot) {
-    Write-Host "[ERROR] Не удалось найти репозиторий. Убедитесь, что вы находитесь в директории репозитория." -ForegroundColor Red
-    exit 1
-  }
-  
-  # 3. Получить UUID текущего репозитория
+  # 2. Получить UUID текущего репозитория
   $uuid = Get-CurrentRepositoryUuid
   if (-not $uuid) {
     Write-Host "[ERROR] Не удалось определить UUID репозитория." -ForegroundColor Red
@@ -214,91 +241,73 @@ function Invoke-Commit {
     exit 1
   }
   
+  # 3. Определить корень репозитория
+  $repoRoot = Find-LocalRepositoryRoot
+  if (-not $repoRoot) {
+    Write-Host "[ERROR] Не удалось найти репозиторий. Убедитесь, что вы находитесь в директории репозитория." -ForegroundColor Red
+    exit 1
+  }
+  
   # 4. Прочитать staging area
-  $staging = Get-StagingArea
-  if ($staging.repository_uuid -ne $uuid) {
-    $staging.repository_uuid = $uuid
+  $stagingFile = Join-Path $repoRoot ".ergovcs" "staging.json"
+  if (-not (Test-Path $stagingFile)) {
+    Write-Host "[ERROR] Staging area не найден. Используйте команду 'add' для добавления файлов." -ForegroundColor Red
+    exit 1
+  }
+  
+  try {
+    $stagingJson = Get-Content $stagingFile -Raw -Encoding UTF8
+    $staging = $stagingJson | ConvertFrom-Json -ErrorAction Stop
+  }
+  catch {
+    Write-Host "[ERROR] Не удалось прочитать staging area: $_" -ForegroundColor Red
+    exit 1
   }
   
   # 5. Проверить, есть ли файлы в staging area
-  if ($staging.files.Count -eq 0) {
+  if (-not $staging.files -or $staging.files.Count -eq 0) {
     Write-Host "[ERROR] Нет файлов в staging area. Используйте команду 'add' для добавления файлов." -ForegroundColor Red
     exit 1
   }
   
   # 6. Проверить, есть ли уже pending_commit
-  # Если есть, значит коммит уже создан локально, но не отправлен на сервер
-  # В этом случае просто обновляем сообщение коммита (если изменилось) и файлы уже там
+  # Если есть, обновляем его и добавляем новые файлы
   if ($staging.pending_commit) {
     Write-Host "[INFO] Обнаружен незавершенный коммит. Файлы будут добавлены к существующему коммиту." -ForegroundColor Yellow
-    Write-Host "[INFO] Используйте команду 'push' для отправки коммита на сервер." -ForegroundColor Yellow
     
-    # Обновляем сообщение коммита, если оно изменилось
+    # Обновляем сообщение коммита
     $staging.pending_commit.message = $message
     $staging.pending_commit.created_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
     
-    if (Save-StagingArea -Staging $staging) {
-      Write-Host "[OK] Коммит обновлен. Сообщение: $message" -ForegroundColor Green
-      Write-Host "[INFO] Всего файлов в коммите: $($staging.files.Count)" -ForegroundColor Cyan
-    } else {
-      Write-Host "[ERROR] Не удалось сохранить staging area" -ForegroundColor Red
-      exit 1
-    }
+    # Сохраняем обновленный staging area
+    $jsonContent = $staging | ConvertTo-Json -Depth 10
+    Set-Content -Path $stagingFile -Value $jsonContent -Encoding UTF8 -Force
+    
+    Write-Host "[OK] Коммит обновлен. Сообщение: $message" -ForegroundColor Green
+    Write-Host "[INFO] Всего файлов в коммите: $($staging.files.Count)" -ForegroundColor Cyan
+    Write-Host "[INFO] Используйте команду 'push' для отправки коммита на сервер." -ForegroundColor Yellow
     return
   }
   
-  # 7. Подготовить данные для API
-  $filesArray = @()
-  foreach ($file in $staging.files) {
-    $filesArray += @{
-      path = $file.path
-      action = $file.action
-      content = $file.content
-    }
+  # 7. Создаем новый pending_commit
+  $staging.pending_commit = @{
+    message = $message
+    created_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    author = $env:USERNAME
   }
   
-  $filesJson = ($filesArray | ConvertTo-Json -Depth 10 -Compress)
-  
-  # 8. Вызвать API для создания коммита
-  Write-Host "[INFO] Создание коммита через API..." -ForegroundColor Cyan
-  
-  $response = Invoke-ApiCreateCommit -Uuid $uuid -Message $message -Files $filesJson
-  
-  if (-not $response) {
-    Write-Host "[ERROR] Не удалось создать коммит через API" -ForegroundColor Red
-    exit 1
-  }
-  
-  # 9. Парсим ответ от API
+  # 8. Сохраняем staging area с pending_commit
   try {
-    $responseObj = $response | ConvertFrom-Json
-    $commitHash = if ($responseObj.hash) { $responseObj.hash } else { $responseObj.id }
+    $jsonContent = $staging | ConvertTo-Json -Depth 10
+    Set-Content -Path $stagingFile -Value $jsonContent -Encoding UTF8 -Force
     
-    Write-Host "[OK] Коммит создан успешно." -ForegroundColor Green
-    if ($commitHash) {
-      Write-Host "Хеш коммита: $commitHash" -ForegroundColor Cyan
-    }
+    Write-Host "[OK] Коммит создан локально." -ForegroundColor Green
     Write-Host "Сообщение: $message" -ForegroundColor Cyan
     Write-Host "Файлов: $($staging.files.Count)" -ForegroundColor Cyan
-    
-    # 10. Создаем pending_commit для отслеживания незавершенного коммита
-    $staging.pending_commit = @{
-      message = $message
-      created_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-      hash = $commitHash
-    }
-    
-    # 11. Сохраняем staging area с pending_commit
-    # Файлы остаются в staging area до команды push
-    if (Save-StagingArea -Staging $staging) {
-      Write-Host "[INFO] Используйте команду 'push' для отправки коммита на сервер." -ForegroundColor Yellow
-    } else {
-      Write-Host "[WARN] Коммит создан, но не удалось сохранить информацию о pending_commit" -ForegroundColor Yellow
-    }
+    Write-Host "[INFO] Используйте команду 'push' для отправки коммита на сервер." -ForegroundColor Yellow
   }
   catch {
-    Write-Host "[ERROR] Не удалось распарсить ответ от API" -ForegroundColor Red
-    Write-Host "Ответ: $response" -ForegroundColor Yellow
+    Write-Host "[ERROR] Не удалось сохранить коммит: $_" -ForegroundColor Red
     exit 1
   }
 }
@@ -404,23 +413,43 @@ function Invoke-Remove {
 }
 
 function Invoke-Create {
-  param([string[]]$Args)
+  param([string[]]$RepoArg)
 
   # Создание репозитория через API
   # Использует API эндпоинт /api/repositories/ для избежания дублирования функционала
   # Примечание: API не поддерживает description, поэтому параметр --description игнорируется
 
   $name = $null
+  $localPath = $null
 
-  for ($i = 0; $i -lt $Args.Count; $i++) {
-    switch ($Args[$i]) {
-      "--name"        { $i++; $name = $Args[$i] }
-      "--description" { $i++; Write-Host "[WARN] Параметр --description не поддерживается API и будет проигнорирован" -ForegroundColor Yellow }
-      "--root"        { Write-Host "[WARN] Параметр --root игнорируется при работе через API" -ForegroundColor Yellow }
+  for ($i = 0; $i -lt $Name.Count; $i++) {
+    switch ($Name[$i]) {
+      "--name"        { $i++; $name = $Name[$i] }
+      "-n"        { $i++; $name = $Name[$i] }
+      "--root"        { 
+        $i++; 
+        $localPath = $Name[$i]
+        Write-Host "[INFO] Указан локальный путь: $localPath" -ForegroundColor Cyan 
+      }
+      "-r"        { 
+        $i++; 
+        $localPath = $Name[$i]
+        Write-Host "[INFO] Указан локальный путь: $localPath" -ForegroundColor Cyan 
+      }
+      "--description" { 
+        $i++; Write-Host "[WARN] Параметр --description не поддерживается API и будет проигнорирован" -ForegroundColor Yellow }
+      "-d" { 
+        $i++; Write-Host "[WARN] Параметр --description не поддерживается API и будет проигнорирован" -ForegroundColor Yellow }
     }
   }
 
   if (-not $name) { $name = Read-Host "Название репозитория" }
+  
+  # Если локальный путь не указан, используем текущую директорию
+  if (-not $localPath) {
+    $localPath = (Get-Location).Path
+    Write-Host "[INFO] Используется текущая директория: $localPath" -ForegroundColor Cyan
+  }
 
   Write-Host "[INFO] Создание репозитория через API..." -ForegroundColor Cyan
 
@@ -443,17 +472,66 @@ function Invoke-Create {
       $repoPath = "media/version_management/$repoId"
     }
 
-    Write-Host "[OK] Репозиторий создан." -ForegroundColor Green
+    # Создаем структуру данных для repos.json
+    $repoData = @{
+      "repositories" = @{
+        "$repoId" = @{
+          "uuid" = $repoId
+          "local_path" = $localPath
+          "remote_path" = $repoPath
+          "current_branch" = "main"
+          "last_updated" = if ($createdAt) { $createdAt } else { Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ" }
+        }
+      }
+    }
+
+    # Определяем путь для .ergovcs/repos.json
+    $ergovcsPath = Join-Path $localPath ".ergovcs"
+    $reposJsonPath = Join-Path $ergovcsPath "repos.json"
+    
+    # Создаем директорию .ergovcs, если она не существует
+    if (-not (Test-Path $ergovcsPath)) {
+      New-Item -ItemType Directory -Path $ergovcsPath -Force | Out-Null
+      Write-Host "[INFO] Создана директория: $ergovcsPath" -ForegroundColor Cyan
+    }
+    
+    # Проверяем, существует ли уже файл repos.json
+    if (Test-Path $reposJsonPath) {
+      # Читаем существующий файл
+      $existingData = Get-Content $reposJsonPath -Raw | ConvertFrom-Json -AsHashtable
+      
+      # Добавляем или обновляем репозиторий
+      if ($existingData.repositories -is [Hashtable]) {
+        $existingData.repositories[$repoId] = $repoData.repositories[$repoId]
+      } else {
+        $existingData.repositories = $repoData.repositories
+      }
+      
+      $jsonContent = $existingData | ConvertTo-Json -Depth 10
+      Set-Content -Path $reposJsonPath -Value $jsonContent -Encoding UTF8
+      Write-Host "[INFO] Обновлен файл: $reposJsonPath" -ForegroundColor Cyan
+    } else {
+      # Создаем новый файл
+      $jsonContent = $repoData | ConvertTo-Json -Depth 10
+      Set-Content -Path $reposJsonPath -Value $jsonContent -Encoding UTF8
+      Write-Host "[INFO] Создан файл: $reposJsonPath" -ForegroundColor Cyan
+    }
+
+    Write-Host "[OK] Репозиторий создан и добавлен в конфигурацию." -ForegroundColor Green
     Write-Host "UUID: $repoId"
     Write-Host "Название: $repoName"
-    Write-Host "Путь: $repoPath"
+    Write-Host "Локальный путь: $localPath"
+    Write-Host "Удаленный путь: $repoPath"
+    Write-Host "Конфигурация сохранена в: $reposJsonPath"
+    
     if ($createdAt) {
       Write-Host "Создан: $createdAt"
     }
   }
   catch {
-    Write-Host "[ERROR] Не удалось распарсить ответ от API" -ForegroundColor Red
-    Write-Host "Ответ: $response" -ForegroundColor Yellow
+    Write-Host "[ERROR] Не удалось распарсить ответ от API или создать конфигурацию" -ForegroundColor Red
+    Write-Host "Ошибка: $_" -ForegroundColor Red
+    Write-Host "Ответ от API: $response" -ForegroundColor Yellow
     exit 1
   }
 }
