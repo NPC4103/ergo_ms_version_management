@@ -132,8 +132,8 @@ class RepositoryCreateSerializer(serializers.ModelSerializer):
 
         # Получаем екущего пользователя из контекста запроса
         request = self.context.get('request')
-        if not request or not request.user:
-            raise serializers.ValidationError("Требуется аутентификация")
+        #if not request or not request.user:
+        #    raise serializers.ValidationError("Требуется аутентификация")
 
         # Создаем репозиторий с указанием владельца
         repository = Repository.objects.create(
@@ -169,18 +169,18 @@ class BranchCreateSerializer(serializers.ModelSerializer):
     def validate(self, data):
         """Проверяем существование репозитория по public_id"""
         request = self.context.get('request')
-        if not request or not request.user:
-            raise serializers.ValidationError("Требуется аутентификация")
+        #if not request or not request.user:
+        #    raise serializers.ValidationError("Требуется аутентификация")
             
         try:
             repository = Repository.objects.get(public_id=data['repository_public_id'])
             
             # Проверяем права доступа, если требуется
-            check_permissions = data.get('check_permissions', True)
-            if check_permissions and not repository.can_user_modify(request.user.id):
-                raise serializers.ValidationError({
-                    'repository_public_id': 'У вас недостаточно прав для создания ветки в этом репозитории'
-                })
+            #check_permissions = data.get('check_permissions', True)
+            #if check_permissions and not repository.can_user_modify(request.user.id):
+            #    raise serializers.ValidationError({
+            #        'repository_public_id': 'У вас недостаточно прав для создания ветки в этом репозитории'
+            #    })
 
             data['repository'] = repository
             del data['repository_public_id']
@@ -207,8 +207,8 @@ class SetDefaultBranchSerializer(serializers.Serializer):
     def validate(self, data):
         """Проверяем, что передан один из вариантов идентификации"""
         request = self.context.get('request')
-        if not request or not request.user:
-            raise serializers.ValidationError("Требуется аутентификация")
+        #if not request or not request.user:
+        #    raise serializers.ValidationError("Требуется аутентификация")
 
         branch_id = data.get('branch_id')
         repository_public_id = data.get('repository_public_id')
@@ -328,8 +328,8 @@ class CollaboratorSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         repository_id = self.context.get('repository_id')
         
-        if not request or not request.user:
-            raise serializers.ValidationError("Требуется аутентификация")
+        #if not request or not request.user:
+        #    raise serializers.ValidationError("Требуется аутентификация")
         
         # Получаем репозиторий
         try:
@@ -376,8 +376,8 @@ class CollaboratorCreateSerializer(serializers.Serializer):
         request = self.context.get('request')
         repository = self.context.get('repository')
         
-        if not request or not request.user:
-            raise serializers.ValidationError("Требуется аутентификация")
+        #if not request or not request.user:
+        #    raise serializers.ValidationError("Требуется аутентификация")
         
         # Проверяем права пользователя
         if request.user.id != repository.owner_id:
