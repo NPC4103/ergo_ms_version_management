@@ -1,5 +1,6 @@
 # serializers.py
 from email.policy import default
+from nt import write
 from tabnanny import check
 from urllib3 import request
 from django.template import context
@@ -120,20 +121,85 @@ class RepositoryCreateSerializer(serializers.ModelSerializer):
     is_private = serializers.BooleanField(default=False, required=False)
     is_read_only = serializers.BooleanField(default=False, required=False)
     
+    # Поля для аутентификации (для CLI/утилит)
+    cli_username = serializers.CharField(
+        required=False,
+        write_only=True,
+        help_text="Имя пользователя для аутентификации через CLI"
+    )
+    cli_password = serializers.CharField(
+        required=False,
+        write_only=True,
+        help_text="Пароль для аутентификации через CLI"
+    )
+
     class Meta:
         model = Repository
-        fields = ['name', 'description', 'initial_branch_name', 'is_private', 'is_read_only']
+        fields = [
+        'name', 
+        'description', 
+        'initial_branch_name', 
+        'is_private', 
+        'is_read_only',
+        'cli_username',
+        'cli_password'
+        ]
     
+    def validate(self, data):
+        """Валидация с аутентификацией пользователя"""
+        request = self.context.get('request')
+        
+        # Извлекаем данные аутентификации
+        cli_username = data.pop('cli_username', None)
+        cli_password = data.pop('cli_password', None)
+        
+        # Проверяем, каким способом будет аутентификация
+        if cli_username or cli_password:
+            # Если указан логин или пароль, проверяем что оба указаны
+            if not (cli_username and cli_password):
+                raise serializers.ValidationError({
+                    'cli_credentials': 'Для аутентификации через CLI укажите и cli_username, и cli_password'
+                })
+
+        # Сохраняем в контексте для использования в create
+        self.context['cli_username'] = cli_username
+        self.context['cli_password'] = cli_password
+        
+        return data
+
     def create(self, validated_data):
         """Создание репозитория с первой веткой"""
         initial_branch_name = validated_data.pop('initial_branch_name', 'main')
         is_private = validated_data.pop('is_private', False)
         is_read_only = validated_data.pop('is_read_only', False)
 
-        # Получаем екущего пользователя из контекста запроса
+        # Получаем данные аутентификации
+        cli_username = self.context.get('cli_username')
+        cli_password = self.context.get('cli_password')
         request = self.context.get('request')
-        #if not request or not request.user:
-        #    raise serializers.ValidationError("Требуется аутентификация")
+        
+        owner_id = None
+        
+        # Способ 1: Аутентификация через CLI (логин/пароль в теле запроса)
+        if cli_username and cli_password:
+            from django.contrib.auth import authenticate
+            user = authenticate(username=cli_username, password=cli_password)
+            if user is not None:
+                owner_id = user.id
+            else:
+                raise serializers.ValidationError({
+                    'cli_credentials': 'Неверные учетные данные'
+                })
+        
+        # Способ 2: Стандартная аутентификация через request (для веб-интерфейса)
+        elif request and request.user and request.user.is_authenticated:
+            owner_id = request.user.id
+        
+        # Если ни один способ не сработал
+        if owner_id is None:
+            raise serializers.ValidationError({
+                'auth': 'Требуется аутентификация. Для CLI укажите cli_username и cli_password'
+            })
 
         # Создаем репозиторий с указанием владельца
         repository = Repository.objects.create(
@@ -141,7 +207,7 @@ class RepositoryCreateSerializer(serializers.ModelSerializer):
             description=validated_data.get('description', ''),
             is_private=is_private,
             is_read_only=is_read_only,
-            owner_id=request.user.id
+            owner_id=owner_id
         )
         
         # Создаем первую ветку (автоматически дефолтная)
@@ -154,7 +220,60 @@ class RepositoryCreateSerializer(serializers.ModelSerializer):
         return repository
 
 
-class BranchCreateSerializer(serializers.ModelSerializer):
+class CLIAuthMixin:
+    """Миксин для добавления аутентификации через CLI (логин/пароль)"""
+    
+    # Добавляем поля аутентификации
+    cli_username = serializers.CharField(required=False, write_only=True)
+    cli_password = serializers.CharField(required=False, write_only=True)
+    
+    def _authenticate_cli_user(self, data):
+        """Аутентификация пользователя из данных CLI"""
+        request = self.context.get('request')
+        
+        # Извлекаем данные аутентификации
+        cli_username = data.pop('cli_username', None)
+        cli_password = data.pop('cli_password', None)
+        
+        # Проверяем, что оба поля указаны
+        if cli_username or cli_password:
+            if not (cli_username and cli_password):
+                raise serializers.ValidationError({
+                    'cli_credentials': 'Для аутентификации через CLI укажите и cli_username, и cli_password'
+                })
+        
+        # Аутентификация через логин/пароль
+        if cli_username and cli_password:
+            from django.contrib.auth import authenticate
+            user = authenticate(username=cli_username, password=cli_password)
+            if user is not None:
+                return user
+            else:
+                raise serializers.ValidationError({
+                    'cli_credentials': 'Неверные учетные данные'
+                })
+        
+        # Стандартная аутентификация через request
+        elif request and request.user and request.user.is_authenticated:
+            return request.user
+        
+        return None
+    
+    def validate(self, data):
+        """Валидация с проверкой аутентификации"""
+        user = self._authenticate_cli_user(data)
+        if user is None:
+            raise serializers.ValidationError({
+                'auth': 'Требуется аутентификация. Для CLI укажите cli_username и cli_password'
+            })
+        
+        # Сохраняем пользователя в контексте
+        self.context['authenticated_user'] = user
+        return data
+
+
+
+class BranchCreateSerializer(CLIAuthMixin, serializers.Serializer):
     """Сериализатор для создания ветки"""
     repository_public_id = serializers.UUIDField(
         write_only=True,
@@ -164,23 +283,32 @@ class BranchCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Branch
-        fields = ['name', 'repository_public_id', 'check_permissions']
+        fields = [
+        'name', 
+        'repository_public_id', 
+        'check_permissions',
+        'cli_username',
+        'cli_password'
+        ]
     
     def validate(self, data):
-        """Проверяем существование репозитория по public_id"""
-        request = self.context.get('request')
-        #if not request or not request.user:
-        #    raise serializers.ValidationError("Требуется аутентификация")
+        """Проверяем существование репозитория и права доступа"""
+        # Вызываем аутентификацию из миксина
+        data = super().validate(data)
+        
+        user = self.context.get('authenticated_user')
+        if not user:
+            raise serializers.ValidationError("Пользователь не аутентифицирован")
             
         try:
             repository = Repository.objects.get(public_id=data['repository_public_id'])
             
-            # Проверяем права доступа, если требуется
-            #check_permissions = data.get('check_permissions', True)
-            #if check_permissions and not repository.can_user_modify(request.user.id):
-            #    raise serializers.ValidationError({
-            #        'repository_public_id': 'У вас недостаточно прав для создания ветки в этом репозитории'
-            #    })
+            # Проверяем права доступа
+            check_permissions = data.get('check_permissions', True)
+            if check_permissions and not repository.can_user_modify(user.id):
+                raise serializers.ValidationError({
+                    'repository_public_id': 'У вас недостаточно прав для создания ветки в этом репозитории'
+                })
 
             data['repository'] = repository
             del data['repository_public_id']
@@ -191,13 +319,13 @@ class BranchCreateSerializer(serializers.ModelSerializer):
                 'repository_public_id': 'Репозиторий с таким public_id не найден'
             })
         return data
-
+    
     def create(self, validated_data):
-        """Создание ветки (автоматически определяется is_default в модели)"""
+        """Создание ветки"""
         return Branch.objects.create(**validated_data)
 
 
-class SetDefaultBranchSerializer(serializers.Serializer):
+class SetDefaultBranchSerializer(CLIAuthMixin, serializers.Serializer):
     """Сериализатор для установки ветки по умолчанию"""
     branch_id = serializers.IntegerField(required=False)
     repository_public_id = serializers.UUIDField(required=False)
@@ -206,9 +334,12 @@ class SetDefaultBranchSerializer(serializers.Serializer):
 
     def validate(self, data):
         """Проверяем, что передан один из вариантов идентификации"""
-        request = self.context.get('request')
-        #if not request or not request.user:
-        #    raise serializers.ValidationError("Требуется аутентификация")
+
+        data = super().validate(data)
+        
+        user = self.context.get('authenticated_user')
+        if not user:
+            raise serializers.ValidationError("Пользователь не аутентифицирован")
 
         branch_id = data.get('branch_id')
         repository_public_id = data.get('repository_public_id')
@@ -220,7 +351,7 @@ class SetDefaultBranchSerializer(serializers.Serializer):
             try:
                 branch = Branch.objects.get(id=branch_id)
                 # Проверяем права доступа
-                if check_permissions and not branch.repository.can_user_modify(request.user.id):
+                if check_permissions and not branch.repository.can_user_modify(user.id):
                     raise serializers.ValidationError({
                         'branch_id': 'У вас недостаточно прав для изменения этой ветки'
                     })
@@ -238,7 +369,7 @@ class SetDefaultBranchSerializer(serializers.Serializer):
                 branch = Branch.objects.get(repository=repository, name=branch_name)
 
                 # Проверяем права доступа
-                if check_permissions and not repository.can_user_modify(request.user.id):
+                if check_permissions and not repository.can_user_modify(user.id):
                     raise serializers.ValidationError({
                         'branch_name': 'У вас недостаточно прав для изменения этой ветки'
                     })
@@ -259,11 +390,6 @@ class SetDefaultBranchSerializer(serializers.Serializer):
             "Необходимо указать либо branch_id, либо repository_public_id и branch_name"
         )
     
-    # def validate_branch_id(self, value):
-    #     """Простая проверка существования ветки"""
-    #     if not Branch.objects.filter(id=value).exists():
-    #         raise serializers.ValidationError("Ветка не найдена")
-    #     return value
     def save(self):
         """Устанавливаем ветку по умолчанию"""
         branch = self.validated_data['branch']
@@ -328,8 +454,8 @@ class CollaboratorSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         repository_id = self.context.get('repository_id')
         
-        #if not request or not request.user:
-        #    raise serializers.ValidationError("Требуется аутентификация")
+        if not request or not request.user:
+            raise serializers.ValidationError("Требуется аутентификация")
         
         # Получаем репозиторий
         try:
@@ -366,23 +492,34 @@ class CollaboratorSerializer(serializers.ModelSerializer):
         )
 
 
-class CollaboratorCreateSerializer(serializers.Serializer):
+class CollaboratorCreateSerializer(CLIAuthMixin, serializers.Serializer):
     """Сериализатор для добавления коллаборатора"""
     user_id = serializers.IntegerField(required=True)
     role = serializers.ChoiceField(choices=Collaborator.ROLE_CHOICES, default='write')
     
+    repository_public_id = serializers.UUIDField(required=True)
+
+
+    # Вызываем аутентификацию из миксина
     def validate(self, data):
         """Валидация данных"""
-        request = self.context.get('request')
-        repository = self.context.get('repository')
+        # Вызываем аутентификацию из миксина
+        data = super().validate(data)
         
-        #if not request or not request.user:
-        #    raise serializers.ValidationError("Требуется аутентификация")
+        user = self.context.get('authenticated_user')
+        if not user:
+            raise serializers.ValidationError("Пользователь не аутентифицирован")
+        
+        # Получаем репозиторий
+        try:
+            repository = Repository.objects.get(public_id=data['repository_public_id'])
+        except Repository.DoesNotExist:
+            raise serializers.ValidationError("Репозиторий не найден")
         
         # Проверяем права пользователя
-        if request.user.id != repository.owner_id:
+        if user.id != repository.owner_id:
             admin_collaborator = repository.collaborators.filter(
-                user_id=request.user.id,
+                user_id=user.id,
                 role='admin'
             ).first()
             if not admin_collaborator:
@@ -400,4 +537,5 @@ class CollaboratorCreateSerializer(serializers.Serializer):
                 'user_id': 'Пользователь уже является коллаборатором этого репозитория'
             })
         
+        data['repository'] = repository
         return data
