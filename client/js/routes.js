@@ -46,6 +46,15 @@ export default {
                 },
             },
             {
+                path: 'repo/:id/graph',
+                name: 'CommitGraph',
+                component:
+                    '@/modules/version_management/client/components/CommitGraph.vue',
+                meta: {
+                    title: 'История коммитов',
+                },
+            },
+            {
                 path: 'repo/:id/commits/create',
                 name: 'CommitCreate',
                 component:
