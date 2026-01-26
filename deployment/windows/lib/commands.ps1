@@ -512,125 +512,165 @@ Write-Host "[TODO] Удалить локальную копию" -ForegroundColo
 function Invoke-Create {
 param([string[]]$RepoArg)
 
-# Создание репозитория через API
-# Использует API эндпоинт /api/repositories/ для избежания дублирования функционала
-# Примечание: API не поддерживает description, поэтому параметр --description игнорируется
+  $name = $null
+  $description = $null
+  $isPrivate = $false
+  $isReadOnly = $false
+  $branchName = $null
+  $cliUsername = $null
+  $cliPassword = $null
+  $localPath = $null
 
-$name = $null
-$localPath = $null
-
-for ($i = 0; $i -lt $Name.Count; $i++) {
-  switch ($Name[$i]) {
-    "--name"        { $i++; $name = $Name[$i] }
-    "-n"        { $i++; $name = $Name[$i] }
-    "--root"        { 
-      $i++; 
-      $localPath = $Name[$i]
-      Write-Host "[INFO] Указан локальный путь: $localPath" -ForegroundColor Cyan 
-    }
-    "-r"        { 
-      $i++; 
-      $localPath = $Name[$i]
-      Write-Host "[INFO] Указан локальный путь: $localPath" -ForegroundColor Cyan 
-    }
-    "--description" { 
-      $i++; Write-Host "[WARN] Параметр --description не поддерживается API и будет проигнорирован" -ForegroundColor Yellow }
-    "-d" { 
-      $i++; Write-Host "[WARN] Параметр --description не поддерживается API и будет проигнорирован" -ForegroundColor Yellow }
-  }
-}
-
-if (-not $name) { $name = Read-Host "Название репозитория" }
-
-# Если локальный путь не указан, используем текущую директорию
-if (-not $localPath) {
-  $localPath = (Get-Location).Path
-  Write-Host "[INFO] Используется текущая директория: $localPath" -ForegroundColor Cyan
-}
-
-Write-Host "[INFO] Создание репозитория через API..." -ForegroundColor Cyan
-
-$response = Invoke-ApiCreateRepository -Name $name
-
-if (-not $response) {
-  Write-Host "[ERROR] Не удалось создать репозиторий" -ForegroundColor Red
-  exit 1
-}
-
-# Парсим ответ от API
-try {
-  $responseObj = $response | ConvertFrom-Json
-  $repoId = $responseObj.public_id
-  if (-not $repoId) { $repoId = $responseObj.id }
-  $repoName = $responseObj.name
-  $repoPath = $responseObj.path
-  $createdAt = $responseObj.created_at
-  if (-not $repoPath -and $repoId) {
-    $repoPath = "media/version_management/$repoId"
-  }
-
-  # Создаем структуру данных для repos.json
-  $repoData = @{
-    "repositories" = @{
-      "$repoId" = @{
-        "uuid" = $repoId
-        "local_path" = $localPath
-        "remote_path" = $repoPath
-        "current_branch" = "main"
-        "last_updated" = if ($createdAt) { $createdAt } else { Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ" }
+  for ($i = 0; $i -lt $RepoArg.Count; $i++) {
+    $arg = $RepoArg[$i]
+    switch -Wildcard ($arg) {
+      "--name" { $i++; if ($i -lt $RepoArg.Count) { $name = $RepoArg[$i] } }
+      "-n" { $i++; if ($i -lt $RepoArg.Count) { $name = $RepoArg[$i] } }
+      "--description" { $i++; if ($i -lt $RepoArg.Count) { $description = $RepoArg[$i] } }
+      "-d" { $i++; if ($i -lt $RepoArg.Count) { $description = $RepoArg[$i] } }
+      "--private" { $isPrivate = $true }
+      "-p" { $isPrivate = $true }
+      "--read-only" { $isReadOnly = $true }
+      "--branch" { $i++; if ($i -lt $RepoArg.Count) { $branchName = $RepoArg[$i] } }
+      "-b" { $i++; if ($i -lt $RepoArg.Count) { $branchName = $RepoArg[$i] } }
+      "--username" { $i++; if ($i -lt $RepoArg.Count) { $cliUsername = $RepoArg[$i] } }
+      "-u" { $i++; if ($i -lt $RepoArg.Count) { $cliUsername = $RepoArg[$i] } }
+      "--password" { $i++; if ($i -lt $RepoArg.Count) { $cliPassword = $RepoArg[$i] } }
+      "-pw" { $i++; if ($i -lt $RepoArg.Count) { $cliPassword = $RepoArg[$i] } }
+      "--root" {
+        $i++
+        if ($i -lt $RepoArg.Count) {
+          $localPath = $RepoArg[$i]
+          Write-Host "[INFO] Указан локальный путь: $localPath" -ForegroundColor Cyan
+        }
+      }
+      "-r" {
+        $i++
+        if ($i -lt $RepoArg.Count) {
+          $localPath = $RepoArg[$i]
+          Write-Host "[INFO] Указан локальный путь: $localPath" -ForegroundColor Cyan
+        }
+      }
+      default {
+        if (-not $name -and -not $arg.StartsWith("-")) {
+          $name = $arg
+        }
       }
     }
   }
 
-  # Определяем путь для .ergovcs/repos.json
-  $ergovcsPath = Join-Path $localPath ".ergovcs"
-  $reposJsonPath = Join-Path $ergovcsPath "repos.json"
-  
-  # Создаем директорию .ergovcs, если она не существует
-  if (-not (Test-Path $ergovcsPath)) {
-    New-Item -ItemType Directory -Path $ergovcsPath -Force | Out-Null
-    Write-Host "[INFO] Создана директория: $ergovcsPath" -ForegroundColor Cyan
+  if (-not $name) {
+    $name = Read-Host "Название репозитория"
   }
-  
-  # Проверяем, существует ли уже файл repos.json
-  if (Test-Path $reposJsonPath) {
-    # Читаем существующий файл
-    $existingData = Get-Content $reposJsonPath -Raw | ConvertFrom-Json -AsHashtable
-    
-    # Добавляем или обновляем репозиторий
-    if ($existingData.repositories -is [Hashtable]) {
-      $existingData.repositories[$repoId] = $repoData.repositories[$repoId]
-    } else {
-      $existingData.repositories = $repoData.repositories
-    }
-    
-    $jsonContent = $existingData | ConvertTo-Json -Depth 10
-    Set-Content -Path $reposJsonPath -Value $jsonContent -Encoding UTF8
-    Write-Host "[INFO] Обновлен файл: $reposJsonPath" -ForegroundColor Cyan
-  } else {
-    # Создаем новый файл
-    $jsonContent = $repoData | ConvertTo-Json -Depth 10
-    Set-Content -Path $reposJsonPath -Value $jsonContent -Encoding UTF8
-    Write-Host "[INFO] Создан файл: $reposJsonPath" -ForegroundColor Cyan
+  if (-not $name) {
+    Write-Host "[ERROR] Необходимо указать название репозитория" -ForegroundColor Red
+    exit 1
   }
 
-  Write-Host "[OK] Репозиторий создан и добавлен в конфигурацию." -ForegroundColor Green
-  Write-Host "UUID: $repoId"
-  Write-Host "Название: $repoName"
-  Write-Host "Локальный путь: $localPath"
-  Write-Host "Удаленный путь: $repoPath"
-  Write-Host "Конфигурация сохранена в: $reposJsonPath"
-  
-  if ($createdAt) {
-    Write-Host "Создан: $createdAt"
+  if (-not $localPath) {
+    $localPath = (Get-Location).Path
   }
-}
-catch {
-  Write-Host "[ERROR] Не удалось распарсить ответ от API или создать конфигурацию" -ForegroundColor Red
-  Write-Host "Ошибка: $_" -ForegroundColor Red
-  Write-Host "Ответ от API: $response" -ForegroundColor Yellow
-  exit 1
-}
+
+  if (-not (Test-Path $localPath)) {
+    New-Item -ItemType Directory -Force -Path $localPath | Out-Null
+  }
+  $localPath = (Resolve-Path $localPath).Path
+
+  if ($cliUsername -or $cliPassword) {
+    if (-not $cliUsername -or -not $cliPassword) {
+      Write-Host "[WARN] Для авторизации нужны --username и --password (оба)." -ForegroundColor Yellow
+    }
+  }
+
+  $bodyObj = @{}
+  if ($name) { $bodyObj["name"] = $name }
+  if ($description) { $bodyObj["description"] = $description }
+  if ($isPrivate) { $bodyObj["is_private"] = $true }
+  if ($isReadOnly) { $bodyObj["is_read_only"] = $true }
+  if ($branchName) { $bodyObj["initial_branch_name"] = $branchName }
+  if ($cliUsername) { $bodyObj["cli_username"] = $cliUsername }
+  if ($cliPassword) { $bodyObj["cli_password"] = $cliPassword }
+
+  $bodyJson = $bodyObj | ConvertTo-Json -Depth 5
+
+  Write-Host "[INFO] Создание репозитория через API..." -ForegroundColor Cyan
+  $response = Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/" -Body $bodyJson
+
+  if (-not $response) {
+    Write-Host "[ERROR] Не удалось создать репозиторий" -ForegroundColor Red
+    exit 1
+  }
+
+  try {
+    $responseObj = $response | ConvertFrom-Json
+    $repoId = $responseObj.public_id
+    if (-not $repoId) { $repoId = $responseObj.id }
+    $repoName = $responseObj.name
+    $repoPath = $responseObj.path
+    $createdAt = $responseObj.created_at
+    if (-not $repoPath -and $repoId) {
+      $repoPath = "media/version_management/$repoId"
+    }
+
+    $ergovcsPath = Join-Path $localPath ".ergovcs"
+    $reposJsonPath = Join-Path $ergovcsPath "repos.json"
+    if (-not (Test-Path $ergovcsPath)) {
+      New-Item -ItemType Directory -Path $ergovcsPath -Force | Out-Null
+    }
+
+    $repoEntry = @{
+      "uuid" = $repoId
+      "local_path" = $localPath
+      "remote_path" = $repoPath
+      "current_branch" = if ($branchName) { $branchName } else { "main" }
+      "last_updated" = if ($createdAt) { $createdAt } else { Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ" }
+    }
+
+    if (Test-Path $reposJsonPath) {
+      $existingData = Get-Content $reposJsonPath -Raw | ConvertFrom-Json -AsHashtable
+      if (-not ($existingData.repositories -is [Hashtable])) {
+        $existingData.repositories = @{}
+      }
+      $existingData.repositories[$repoId] = $repoEntry
+      $jsonContent = $existingData | ConvertTo-Json -Depth 10
+      Set-Content -Path $reposJsonPath -Value $jsonContent -Encoding UTF8
+    } else {
+      $repoData = @{ repositories = @{ "$repoId" = $repoEntry } }
+      $jsonContent = $repoData | ConvertTo-Json -Depth 10
+      Set-Content -Path $reposJsonPath -Value $jsonContent -Encoding UTF8
+    }
+
+    $ignoreFile = Join-Path $localPath ".ergovcsignore"
+    if (-not (Test-Path $ignoreFile)) {
+      '.ergovcs/' | Set-Content -Path $ignoreFile -Encoding ASCII
+    }
+
+    $readmeFile = Join-Path $localPath "README.md"
+    if (-not (Test-Path $readmeFile)) {
+      @(
+        "# Repository",
+        "",
+        "Created by ergovcs."
+      ) -join "`r`n" | Set-Content -Path $readmeFile -Encoding ASCII
+    }
+
+    Write-Host "[OK] Репозиторий создан и добавлен в конфигурацию." -ForegroundColor Green
+    Write-Host "UUID: $repoId"
+    Write-Host "Название: $repoName"
+    Write-Host "Локальный путь: $localPath"
+    Write-Host "Удаленный путь: $repoPath"
+    Write-Host "Конфигурация сохранена в: $reposJsonPath"
+
+    if ($createdAt) {
+      Write-Host "Создан: $createdAt"
+    }
+  }
+  catch {
+    Write-Host "[ERROR] Не удалось распарсить ответ от API или создать конфигурацию" -ForegroundColor Red
+    Write-Host "Ошибка: $_" -ForegroundColor Red
+    Write-Host "Ответ от API: $response" -ForegroundColor Yellow
+    exit 1
+  }
 }
 
 function Invoke-Download {
