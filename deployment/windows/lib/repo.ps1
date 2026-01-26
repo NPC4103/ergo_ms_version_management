@@ -148,6 +148,82 @@ function Invoke-ApiListRepositories {
   Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/"
 }
 
+# Получить список веток репозитория
+function Invoke-ApiListBranches {
+  param([string]$RepoUuid)
+  Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/$RepoUuid/branches/"
+}
+
+# Создать ветку
+function Invoke-ApiCreateBranch {
+  param(
+    [string]$RepoUuid,
+    [string]$BranchName,
+    [string]$CliUsername = $null,
+    [string]$CliPassword = $null,
+    [bool]$CheckPermissions = $true
+  )
+
+  $bodyObj = @{
+    repository_public_id = $RepoUuid
+    name = $BranchName
+    check_permissions = $CheckPermissions
+  }
+  if ($CliUsername) { $bodyObj["cli_username"] = $CliUsername }
+  if ($CliPassword) { $bodyObj["cli_password"] = $CliPassword }
+
+  $body = $bodyObj | ConvertTo-Json -Depth 5
+  Invoke-ApiRequest -Method "POST" -Endpoint "/branches/" -Body $body
+}
+
+# Установить ветку по умолчанию (по id)
+function Invoke-ApiSetDefaultBranchById {
+  param(
+    [int]$BranchId,
+    [string]$CliUsername = $null,
+    [string]$CliPassword = $null,
+    [bool]$CheckPermissions = $true
+  )
+
+  $bodyObj = @{
+    branch_id = $BranchId
+    check_permissions = $CheckPermissions
+  }
+  if ($CliUsername) { $bodyObj["cli_username"] = $CliUsername }
+  if ($CliPassword) { $bodyObj["cli_password"] = $CliPassword }
+
+  $body = $bodyObj | ConvertTo-Json -Depth 5
+  Invoke-ApiRequest -Method "POST" -Endpoint "/branches/set_default/" -Body $body
+}
+
+# Установить ветку по умолчанию (по repo+name)
+function Invoke-ApiSetDefaultBranchByName {
+  param(
+    [string]$RepoUuid,
+    [string]$BranchName,
+    [string]$CliUsername = $null,
+    [string]$CliPassword = $null,
+    [bool]$CheckPermissions = $true
+  )
+
+  $bodyObj = @{
+    repository_public_id = $RepoUuid
+    branch_name = $BranchName
+    check_permissions = $CheckPermissions
+  }
+  if ($CliUsername) { $bodyObj["cli_username"] = $CliUsername }
+  if ($CliPassword) { $bodyObj["cli_password"] = $CliPassword }
+
+  $body = $bodyObj | ConvertTo-Json -Depth 5
+  Invoke-ApiRequest -Method "POST" -Endpoint "/branches/set_default/" -Body $body
+}
+
+# Удалить ветку
+function Invoke-ApiDeleteBranch {
+  param([int]$BranchId)
+  Invoke-ApiRequest -Method "DELETE" -Endpoint "/branches/$BranchId/"
+}
+
 # Клонировать репозиторий через API
 function Invoke-ApiCloneRepository {
   param([string]$Uuid)

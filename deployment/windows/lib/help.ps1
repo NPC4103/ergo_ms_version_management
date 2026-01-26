@@ -35,6 +35,14 @@ ergovcs <command> [options]
 Вспомогательные команды:
   create [--name <имя>] [--description <текст>] [--private] [--read-only] [--branch <ветка>] [--username <u>] [--password <p>] [--root <путь>]
     Создать новый репозиторий через API и подготовить локальные файлы
+
+  branch <list|create|delete|set-default> [опции]
+    Управление ветками (через API)
+    Примеры:
+      ergovcs branch list --repo <uuid>
+      ergovcs branch create --repo <uuid> --name <ветка> --username <u> --password <p>
+      ergovcs branch delete --id <branch_id>
+      ergovcs branch set-default --repo <uuid> --name <ветка>
     
   download --source <zip|dir> [--uuid <uuid>] [--name <имя>]
     Скачать/импортировать репозиторий из zip-архива или папки

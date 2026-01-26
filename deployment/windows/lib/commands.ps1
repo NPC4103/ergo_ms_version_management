@@ -727,3 +727,104 @@ Write-Host "[OK] Репозиторий импортирован." -ForegroundCo
 Write-Host "UUID: $uuid"
 Write-Host "Путь: $target"
 }
+
+# ============================================================================
+# Управление ветками
+# Команда: ergovcs branch <list|create|delete|set-default> ...
+# ============================================================================
+function Invoke-Branch {
+param([string[]]$Args)
+
+if (-not $Args -or $Args.Count -eq 0) {
+  Write-Host "[ERROR] Использование: ergovcs branch <list|create|delete|set-default>" -ForegroundColor Red
+  exit 1
+}
+
+$action = $Args[0]
+$repoUuid = $null
+$branchName = $null
+$branchId = $null
+$cliUsername = $null
+$cliPassword = $null
+$checkPermissions = $true
+
+for ($i = 1; $i -lt $Args.Count; $i++) {
+  switch ($Args[$i]) {
+    "--repo" { $i++; if ($i -lt $Args.Count) { $repoUuid = $Args[$i] } }
+    "--name" { $i++; if ($i -lt $Args.Count) { $branchName = $Args[$i] } }
+    "--id" { $i++; if ($i -lt $Args.Count) { $branchId = $Args[$i] } }
+    "--username" { $i++; if ($i -lt $Args.Count) { $cliUsername = $Args[$i] } }
+    "-u" { $i++; if ($i -lt $Args.Count) { $cliUsername = $Args[$i] } }
+    "--password" { $i++; if ($i -lt $Args.Count) { $cliPassword = $Args[$i] } }
+    "-pw" { $i++; if ($i -lt $Args.Count) { $cliPassword = $Args[$i] } }
+    "--no-check-permissions" { $checkPermissions = $false }
+  }
+}
+
+if ($cliUsername -or $cliPassword) {
+  if (-not $cliUsername -or -not $cliPassword) {
+    Write-Host "[WARN] Для авторизации нужны --username и --password (оба)." -ForegroundColor Yellow
+  }
+}
+
+switch ($action) {
+  "list" {
+    if (-not $repoUuid) {
+      Write-Host "[ERROR] Нужно указать --repo <UUID>" -ForegroundColor Red
+      exit 1
+    }
+    $response = Invoke-ApiListBranches -RepoUuid $repoUuid
+    if (-not $response) { exit 1 }
+    $data = $response | ConvertFrom-Json
+    $branches = if ($data.branches) { $data.branches } else { $data }
+    foreach ($b in $branches) {
+      Write-Host ("- {0} (id={1}, default={2})" -f $b.name, $b.id, $b.is_default)
+    }
+  }
+  "create" {
+    if (-not $repoUuid -or -not $branchName) {
+      Write-Host "[ERROR] Нужно указать --repo <UUID> и --name <ветка>" -ForegroundColor Red
+      exit 1
+    }
+    Invoke-ApiCreateBranch -RepoUuid $repoUuid -BranchName $branchName -CliUsername $cliUsername -CliPassword $cliPassword -CheckPermissions:$checkPermissions | Out-Null
+    Write-Host "[OK] Ветка создана: $branchName" -ForegroundColor Green
+  }
+  "delete" {
+    if (-not $branchId) {
+      if ($repoUuid -and $branchName) {
+        $response = Invoke-ApiListBranches -RepoUuid $repoUuid
+        if ($response) {
+          $data = $response | ConvertFrom-Json
+          $branches = if ($data.branches) { $data.branches } else { $data }
+          $match = $branches | Where-Object { $_.name -eq $branchName } | Select-Object -First 1
+          if ($match) { $branchId = $match.id }
+        }
+      }
+    }
+    if (-not $branchId) {
+      Write-Host "[ERROR] Нужно указать --id <branch_id> (или --repo + --name для поиска)" -ForegroundColor Red
+      exit 1
+    }
+    Invoke-ApiDeleteBranch -BranchId $branchId | Out-Null
+    Write-Host "[OK] Ветка удалена (id=$branchId)" -ForegroundColor Green
+  }
+  "set-default" {
+    if ($branchId) {
+      Invoke-ApiSetDefaultBranchById -BranchId $branchId -CliUsername $cliUsername -CliPassword $cliPassword -CheckPermissions:$checkPermissions | Out-Null
+      Write-Host "[OK] Ветка установлена по умолчанию (id=$branchId)" -ForegroundColor Green
+    }
+    elseif ($repoUuid -and $branchName) {
+      Invoke-ApiSetDefaultBranchByName -RepoUuid $repoUuid -BranchName $branchName -CliUsername $cliUsername -CliPassword $cliPassword -CheckPermissions:$checkPermissions | Out-Null
+      Write-Host "[OK] Ветка установлена по умолчанию: $branchName" -ForegroundColor Green
+    }
+    else {
+      Write-Host "[ERROR] Нужно указать --id <branch_id> или --repo <UUID> и --name <ветка>" -ForegroundColor Red
+      exit 1
+    }
+  }
+  default {
+    Write-Host "[ERROR] Неизвестное действие: $action" -ForegroundColor Red
+    exit 1
+  }
+}
+}

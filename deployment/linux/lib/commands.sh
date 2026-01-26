@@ -858,3 +858,122 @@ cmd_download() {
   echo "UUID:   $uuid"
   echo "Путь:   $target"
 }
+
+# ============================================================================
+# Управление ветками
+# Команда: ergovcs branch <list|create|delete|set-default> ...
+# ============================================================================
+cmd_branch() {
+  local action="${1:-}"
+  shift || true
+
+  if [[ -z "$action" ]]; then
+    echo "[ERROR] Использование: ergovcs branch <list|create|delete|set-default>" >&2
+    exit 1
+  fi
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "[ERROR] python3 не установлен. Установите его для работы с ветками." >&2
+    exit 1
+  fi
+
+  local repo_uuid=""
+  local branch_name=""
+  local branch_id=""
+  local cli_username=""
+  local cli_password=""
+  local check_permissions="true"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo) shift; repo_uuid="${1:-}" ;;
+      --name) shift; branch_name="${1:-}" ;;
+      --id) shift; branch_id="${1:-}" ;;
+      --username|-u) shift; cli_username="${1:-}" ;;
+      --password|-pw) shift; cli_password="${1:-}" ;;
+      --no-check-permissions) check_permissions="false" ;;
+      *) echo "[WARN] Неизвестный параметр: $1" >&2 ;;
+    esac
+    shift || true
+  done
+
+  if [[ -n "$cli_username" || -n "$cli_password" ]]; then
+    if [[ -z "$cli_username" || -z "$cli_password" ]]; then
+      echo "[WARN] Для авторизации нужны --username и --password (оба)." >&2
+    fi
+  fi
+
+  case "$action" in
+    list)
+      if [[ -z "$repo_uuid" ]]; then
+        echo "[ERROR] Нужно указать --repo <UUID>" >&2
+        exit 1
+      fi
+      local response
+      response="$(api_list_branches "$repo_uuid")" || exit 1
+      echo "$response" | python3 - <<'PY'
+import json, sys
+data = json.load(sys.stdin)
+branches = data.get("branches", data)
+if isinstance(branches, list):
+    for b in branches:
+        name = b.get("name")
+        bid = b.get("id")
+        is_default = b.get("is_default")
+        print(f"- {name} (id={bid}, default={is_default})")
+else:
+    print(json.dumps(data, ensure_ascii=False, indent=2))
+PY
+      ;;
+    create)
+      if [[ -z "$repo_uuid" || -z "$branch_name" ]]; then
+        echo "[ERROR] Нужно указать --repo <UUID> и --name <ветка>" >&2
+        exit 1
+      fi
+      api_create_branch "$repo_uuid" "$branch_name" "$cli_username" "$cli_password" "$check_permissions" >/dev/null
+      echo "[OK] Ветка создана: $branch_name"
+      ;;
+    delete)
+      if [[ -z "$branch_id" ]]; then
+        if [[ -n "$repo_uuid" && -n "$branch_name" ]]; then
+          local resp
+          resp="$(api_list_branches "$repo_uuid")" || exit 1
+          branch_id="$(echo "$resp" | python3 - <<PY
+import json, sys
+data = json.load(sys.stdin)
+branches = data.get("branches", data)
+target = "${branch_name}"
+for b in branches:
+    if b.get("name") == target:
+        print(b.get("id"))
+        sys.exit(0)
+print("")
+PY
+)"
+        fi
+      fi
+      if [[ -z "$branch_id" ]]; then
+        echo "[ERROR] Нужно указать --id <branch_id> (или --repo + --name для поиска)" >&2
+        exit 1
+      fi
+      api_delete_branch "$branch_id" >/dev/null
+      echo "[OK] Ветка удалена (id=$branch_id)"
+      ;;
+    set-default)
+      if [[ -n "$branch_id" ]]; then
+        api_set_default_branch_by_id "$branch_id" "$cli_username" "$cli_password" "$check_permissions" >/dev/null
+        echo "[OK] Ветка установлена по умолчанию (id=$branch_id)"
+      elif [[ -n "$repo_uuid" && -n "$branch_name" ]]; then
+        api_set_default_branch_by_name "$repo_uuid" "$branch_name" "$cli_username" "$cli_password" "$check_permissions" >/dev/null
+        echo "[OK] Ветка установлена по умолчанию: $branch_name"
+      else
+        echo "[ERROR] Нужно указать --id <branch_id> или --repo <UUID> и --name <ветка>" >&2
+        exit 1
+      fi
+      ;;
+    *)
+      echo "[ERROR] Неизвестное действие: $action" >&2
+      exit 1
+      ;;
+  esac
+}
