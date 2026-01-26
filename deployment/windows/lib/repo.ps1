@@ -142,6 +142,12 @@ function Invoke-ApiCreateRepository {
   Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/" -Body $bodyJson
 }
 
+# Получить список репозиториев через API
+function Invoke-ApiListRepositories {
+  # Возвращает: JSON со списком репозиториев
+  Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/"
+}
+
 # Клонировать репозиторий через API
 function Invoke-ApiCloneRepository {
   param([string]$Uuid)

@@ -121,6 +121,12 @@ api_create_repository() {
   api_request "POST" "/repositories/" "$body"
 }
 
+# Получить список репозиториев через API
+api_list_repositories() {
+  # Возвращает: JSON со списком репозиториев
+  api_request "GET" "/repositories/"
+}
+
 # Клонировать репозиторий через API
 api_clone_repository() {
   # TODO: Реализовать клонирование через API
