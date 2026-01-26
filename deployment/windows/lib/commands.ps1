@@ -415,32 +415,32 @@ function Invoke-Commit {
 # Отправляет изменения в папку media/version_management/<UUID>/
 # ============================================================================
 function Invoke-Push {
-param([string[]]$Args)
+  param([string[]]$Args)
 
-# TODO: Реализовать отправку изменений на сервер
-# 1. Получить название ветки из аргументов
-# 2. Получить UUID текущего репозитория
-# 3. Собрать все незакоммиченные изменения
-# 4. Вызвать API эндпоинт /api/repositories/{id}/push/
-# 5. Отправить изменения в папку media/version_management/<UUID>/
+  # TODO: Реализовать отправку изменений на сервер
+  # 1. Получить название ветки из аргументов
+  # 2. Получить UUID текущего репозитория
+  # 3. Собрать все незакоммиченные изменения
+  # 4. Вызвать API эндпоинт /api/repositories/{id}/push/
+  # 5. Отправить изменения в папку media/version_management/<UUID>/
 
-$branch = $null
+  $branch = $null
 
-for ($i = 0; $i -lt $Args.Count; $i++) {
-  $branch = $Args[$i]
-}
+  for ($i = 0; $i -lt $Args.Count; $i++) {
+    $branch = $Args[$i]
+  }
 
-if (-not $branch) {
-  Write-Host "[ERROR] Необходимо указать название ветки" -ForegroundColor Red
-  Write-Host "Использование: ergovcs push <ветка>" -ForegroundColor Yellow
-  exit 1
-}
+  if (-not $branch) {
+    Write-Host "[ERROR] Необходимо указать название ветки" -ForegroundColor Red
+    Write-Host "Использование: ergovcs push <ветка>" -ForegroundColor Yellow
+    exit 1
+  }
 
-# TODO: Реализовать отправку изменений
-Write-Host "[INFO] Отправка изменений в ветку $branch..." -ForegroundColor Cyan
-Write-Host "[TODO] Получить UUID текущего репозитория" -ForegroundColor Yellow
-Write-Host "[TODO] Собрать незакоммиченные изменения" -ForegroundColor Yellow
-Write-Host "[TODO] Вызвать API /api/repositories/{id}/push/" -ForegroundColor Yellow
+  # TODO: Реализовать отправку изменений
+  Write-Host "[INFO] Отправка изменений в ветку $branch..." -ForegroundColor Cyan
+  Write-Host "[TODO] Получить UUID текущего репозитория" -ForegroundColor Yellow
+  Write-Host "[TODO] Собрать незакоммиченные изменения" -ForegroundColor Yellow
+  Write-Host "[TODO] Вызвать API /api/repositories/{id}/push/" -ForegroundColor Yellow
 }
 
 # ============================================================================
@@ -449,32 +449,32 @@ Write-Host "[TODO] Вызвать API /api/repositories/{id}/push/" -ForegroundC
 # Подтягивает изменения с сервера на комп пользователя
 # ============================================================================
 function Invoke-Update {
-param([string[]]$Args)
+  param([string[]]$Args)
 
-# TODO: Реализовать обновление локального репозитория
-# 1. Получить название ветки из аргументов
-# 2. Получить UUID текущего репозитория
-# 3. Вызвать API эндпоинт /api/repositories/{id}/update/
-# 4. Скачать изменения из папки media/version_management/<UUID>/ на локальный компьютер
-# Примечание: не важно какая ветка скачана у пользователя, программе всё равно куда она шлёт данные
+  # TODO: Реализовать обновление локального репозитория
+  # 1. Получить название ветки из аргументов
+  # 2. Получить UUID текущего репозитория
+  # 3. Вызвать API эндпоинт /api/repositories/{id}/update/
+  # 4. Скачать изменения из папки media/version_management/<UUID>/ на локальный компьютер
+  # Примечание: не важно какая ветка скачана у пользователя, программе всё равно куда она шлёт данные
 
-$branch = $null
+  $branch = $null
 
-for ($i = 0; $i -lt $Args.Count; $i++) {
-  $branch = $Args[$i]
-}
+  for ($i = 0; $i -lt $Args.Count; $i++) {
+    $branch = $Args[$i]
+  }
 
-if (-not $branch) {
-  Write-Host "[ERROR] Необходимо указать название ветки" -ForegroundColor Red
-  Write-Host "Использование: ergovcs update <ветка>" -ForegroundColor Yellow
-  exit 1
-}
+  if (-not $branch) {
+    Write-Host "[ERROR] Необходимо указать название ветки" -ForegroundColor Red
+    Write-Host "Использование: ergovcs update <ветка>" -ForegroundColor Yellow
+    exit 1
+  }
 
-# TODO: Реализовать обновление
-Write-Host "[INFO] Обновление локального репозитория из ветки $branch..." -ForegroundColor Cyan
-Write-Host "[TODO] Получить UUID текущего репозитория" -ForegroundColor Yellow
-Write-Host "[TODO] Вызвать API /api/repositories/{id}/update/" -ForegroundColor Yellow
-Write-Host "[TODO] Скачать изменения на локальный компьютер" -ForegroundColor Yellow
+  # TODO: Реализовать обновление
+  Write-Host "[INFO] Обновление локального репозитория из ветки $branch..." -ForegroundColor Cyan
+  Write-Host "[TODO] Получить UUID текущего репозитория" -ForegroundColor Yellow
+  Write-Host "[TODO] Вызвать API /api/repositories/{id}/update/" -ForegroundColor Yellow
+  Write-Host "[TODO] Скачать изменения на локальный компьютер" -ForegroundColor Yellow
 }
 
 # ============================================================================
@@ -483,34 +483,34 @@ Write-Host "[TODO] Скачать изменения на локальный к�
 # Удаляет репозиторий с компа пользователя
 # ============================================================================
 function Invoke-Remove {
-param([string[]]$Args)
+  param([string[]]$Args)
 
-# TODO: Реализовать удаление репозитория
-# 1. Получить UUID из аргументов
-# 2. Найти локальную копию репозитория
-# 3. Удалить локальную копию репозитория
-# Примечание: это удаляет только локальную копию, не репозиторий на сервере
+  # TODO: Реализовать удаление репозитория
+  # 1. Получить UUID из аргументов
+  # 2. Найти локальную копию репозитория
+  # 3. Удалить локальную копию репозитория
+  # Примечание: это удаляет только локальную копию, не репозиторий на сервере
 
-$uuid = $null
+  $uuid = $null
 
-for ($i = 0; $i -lt $Args.Count; $i++) {
-  $uuid = $Args[$i]
-}
+  for ($i = 0; $i -lt $Args.Count; $i++) {
+    $uuid = $Args[$i]
+  }
 
-if (-not $uuid) {
-  Write-Host "[ERROR] Необходимо указать UUID репозитория" -ForegroundColor Red
-  Write-Host "Использование: ergovcs remove <UUID>" -ForegroundColor Yellow
-  exit 1
-}
+  if (-not $uuid) {
+    Write-Host "[ERROR] Необходимо указать UUID репозитория" -ForegroundColor Red
+    Write-Host "Использование: ergovcs remove <UUID>" -ForegroundColor Yellow
+    exit 1
+  }
 
-# TODO: Реализовать удаление локальной копии
-Write-Host "[INFO] Удаление локальной копии репозитория $uuid..." -ForegroundColor Cyan
-Write-Host "[TODO] Найти локальную копию репозитория" -ForegroundColor Yellow
-Write-Host "[TODO] Удалить локальную копию" -ForegroundColor Yellow
+  # TODO: Реализовать удаление локальной копии
+  Write-Host "[INFO] Удаление локальной копии репозитория $uuid..." -ForegroundColor Cyan
+  Write-Host "[TODO] Найти локальную копию репозитория" -ForegroundColor Yellow
+  Write-Host "[TODO] Удалить локальную копию" -ForegroundColor Yellow
 }
 
 function Invoke-Create {
-param([string[]]$RepoArg)
+  param([string[]]$RepoArg)
 
   $name = $null
   $description = $null
@@ -674,49 +674,49 @@ param([string[]]$RepoArg)
 }
 
 function Invoke-Download {
-param([string[]]$Args)
+  param([string[]]$Args)
 
-Detect-ProjectRoot
+  Detect-ProjectRoot
 
-$source = $null
-$uuid = $null
-$name = $null
-$manualRoot = $null
+  $source = $null
+  $uuid = $null
+  $name = $null
+  $manualRoot = $null
 
-for ($i = 0; $i -lt $Args.Count; $i++) {
-  switch ($Args[$i]) {
-    "--source" { $i++; $source = $Args[$i] }
-    "--uuid"   { $i++; $uuid = $Args[$i] }
-    "--name"   { $i++; $name = $Args[$i] }
-    "--root"   { $i++; $manualRoot = $Args[$i] }
+  for ($i = 0; $i -lt $Args.Count; $i++) {
+    switch ($Args[$i]) {
+      "--source" { $i++; $source = $Args[$i] }
+      "--uuid"   { $i++; $uuid = $Args[$i] }
+      "--name"   { $i++; $name = $Args[$i] }
+      "--root"   { $i++; $manualRoot = $Args[$i] }
+    }
   }
-}
 
-if ($manualRoot) {
-  $script:ProjectRoot = $manualRoot
-  $script:MediaDir = Join-Path $script:ProjectRoot "media\version_management"
-  New-Item -ItemType Directory -Force -Path $script:MediaDir | Out-Null
-}
+  if ($manualRoot) {
+    $script:ProjectRoot = $manualRoot
+    $script:MediaDir = Join-Path $script:ProjectRoot "media\version_management"
+    New-Item -ItemType Directory -Force -Path $script:MediaDir | Out-Null
+  }
 
-if (-not $source) {
-  Write-Host "[ERROR] Нужно указать --source" -ForegroundColor Red
-  exit 1
-}
+  if (-not $source) {
+    Write-Host "[ERROR] Нужно указать --source" -ForegroundColor Red
+    exit 1
+  }
 
-if (-not (Test-Path $source)) {
-  Write-Host "[ERROR] Источник не найден: $source" -ForegroundColor Red
-  exit 1
-}
+  if (-not (Test-Path $source)) {
+    Write-Host "[ERROR] Источник не найден: $source" -ForegroundColor Red
+    exit 1
+  }
 
-if (-not $uuid) { $uuid = New-Uuid }
+  if (-not $uuid) { $uuid = New-Uuid }
 
-$target = Ensure-RepoDirs -Uuid $uuid
-Import-FromSource -Source $source -Target $target
-if ($name) { Save-Metadata -Target $target -Name $name -Description "" }
+  $target = Ensure-RepoDirs -Uuid $uuid
+  Import-FromSource -Source $source -Target $target
+  if ($name) { Save-Metadata -Target $target -Name $name -Description "" }
 
-Write-Host "[OK] Репозиторий импортирован." -ForegroundColor Green
-Write-Host "UUID: $uuid"
-Write-Host "Путь: $target"
+  Write-Host "[OK] Репозиторий импортирован." -ForegroundColor Green
+  Write-Host "UUID: $uuid"
+  Write-Host "Путь: $target"
 }
 
 # ============================================================================
