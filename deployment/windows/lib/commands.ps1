@@ -43,16 +43,7 @@ function Invoke-Add {
   Write-Host "[DEBUG] Files count: $($Files.Count)" -ForegroundColor Gray
   Write-Host "[DEBUG] Files content: $($Files -join ', ')" -ForegroundColor Gray
 
-  # 1. Получить UUID репозитория (это автоматически найдет корень репозитория)
-  $uuid = Get-CurrentRepositoryUuid
-  Write-Host "[DEBUG] UUID: $uuid" -ForegroundColor Gray
-  if (-not $uuid) {
-    Write-Host "[ERROR] Не удалось определить UUID репозитория." -ForegroundColor Red
-    Write-Host "[INFO] Убедитесь, что репозиторий был клонирован или создан через команду clone/create." -ForegroundColor Yellow
-    exit 1
-  }
-
-  # 2. Определить корень репозитория из пути, который нашел Get-CurrentRepositoryUuid
+  # 1. Определить корень репозитория из пути
   $repoRoot = Find-LocalRepositoryRoot
   Write-Host "[DEBUG] RepoRoot: $repoRoot" -ForegroundColor Gray
   if (-not $repoRoot) {
@@ -60,14 +51,41 @@ function Invoke-Add {
     exit 1
   }
 
-  # 3. Создать директорию .ergovcs, если она не существует
+  # 2. Получить UUID репозитория
+  $uuid = Get-CurrentRepositoryUuid -LocalPath $repoRoot
+  Write-Host "[DEBUG] UUID: $uuid" -ForegroundColor Gray
+  if (-not $uuid) {
+    Write-Host "[ERROR] Не удалось определить UUID репозитория." -ForegroundColor Red
+    Write-Host "[INFO] Убедитесь, что репозиторий был клонирован или создан через команду clone/create." -ForegroundColor Yellow
+    exit 1
+  }
+
+  # 3. Если аргументы не переданы, добавить все файлы в репозитории
+  if ($Files.Count -eq 0) {
+    Write-Host "[INFO] Аргументы не указаны. Добавляю все файлы в репозитории..." -ForegroundColor Cyan
+    $Files = Get-ChildItem -Path $repoRoot -File -Recurse -Force |
+             Where-Object { $_.FullName -notlike "*\.ergovcs\*" } |
+             ForEach-Object { 
+               $relativePath = [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName).Replace('\', '/')
+               $relativePath
+             }
+    
+    if ($Files.Count -eq 0) {
+      Write-Host "[INFO] Нет файлов для добавления." -ForegroundColor Yellow
+      exit 0
+    }
+    
+    Write-Host "[DEBUG] Всего найдено файлов: $($Files.Count)" -ForegroundColor Gray
+  }
+
+  # 4. Создать директорию .ergovcs, если она не существует
   $ergovcsPath = Join-Path $repoRoot ".ergovcs"
   if (-not (Test-Path $ergovcsPath)) {
     New-Item -ItemType Directory -Path $ergovcsPath -Force | Out-Null
     Write-Host "[INFO] Создана директория .ergovcs" -ForegroundColor Cyan
   }
 
-  # 4. Прочитать текущий staging area или создать новый
+  # 5. Прочитать текущий staging area или создать новый
   $stagingFile = Join-Path $ergovcsPath "staging.json"
   $staging = @{
     repository_uuid = $uuid
@@ -97,7 +115,7 @@ function Invoke-Add {
     }
   }
 
-  # 5. Обработать каждый файл из аргументов
+  # 6. Обработать каждый файл
   $hasErrors = $false
   $addedFiles = @()
   
@@ -127,6 +145,12 @@ function Invoke-Add {
     # Получить относительный путь от корня репозитория
     $relativePath = [System.IO.Path]::GetRelativePath($repoRoot, $fullPath).Replace('\', '/')
     Write-Host "[DEBUG] RelativePath: $relativePath"
+
+    # Пропустить файлы в директории .ergovcs
+    if ($relativePath -like '.ergovcs/*' -or $relativePath -eq '.ergovcs') {
+      Write-Host "[INFO] Пропущен системный файл: $relativePath" -ForegroundColor Gray
+      continue
+    }
 
     # Прочитать содержимое файла
     try {
@@ -171,7 +195,7 @@ function Invoke-Add {
     }
   }
   
-  # 6. Сохранить staging area
+  # 7. Сохранить staging area
   try {
     $jsonContent = $staging | ConvertTo-Json -Depth 10
     Set-Content -Path $stagingFile -Value $jsonContent -Encoding UTF8 -Force
@@ -204,6 +228,7 @@ function Invoke-Add {
 # ============================================================================
 function Invoke-Commit {
   param([string[]]$MessageArg)
+  
   # 1. Получить сообщение коммита из аргумента -m
   $message = $null
   
@@ -422,24 +447,42 @@ function Invoke-Create {
   $name = $null
   $localPath = $null
 
-  for ($i = 0; $i -lt $Name.Count; $i++) {
-    switch ($Name[$i]) {
-      "--name"        { $i++; $name = $Name[$i] }
-      "-n"        { $i++; $name = $Name[$i] }
-      "--root"        { 
-        $i++; 
-        $localPath = $Name[$i]
-        Write-Host "[INFO] Указан локальный путь: $localPath" -ForegroundColor Cyan 
+  for ($i = 0; $i -lt $RepoArg.Count; $i++) {
+    switch ($RepoArg[$i]) {
+      "--name" { 
+        $i++
+        if ($i -lt $RepoArg.Count) {
+          $name = $RepoArg[$i]
+        }
       }
-      "-r"        { 
-        $i++; 
-        $localPath = $Name[$i]
-        Write-Host "[INFO] Указан локальный путь: $localPath" -ForegroundColor Cyan 
+      "-n" { 
+        $i++
+        if ($i -lt $RepoArg.Count) {
+          $name = $RepoArg[$i]
+        }
       }
       "--description" { 
-        $i++; Write-Host "[WARN] Параметр --description не поддерживается API и будет проигнорирован" -ForegroundColor Yellow }
+        $i++; 
+        Write-Host "[WARN] Параметр --description не поддерживается API и будет проигнорирован" -ForegroundColor Yellow 
+      }
       "-d" { 
-        $i++; Write-Host "[WARN] Параметр --description не поддерживается API и будет проигнорирован" -ForegroundColor Yellow }
+        $i++; 
+        Write-Host "[WARN] Параметр --description не поддерживается API и будет проигнорирован" -ForegroundColor Yellow 
+      }
+      "--root" { 
+        $i++
+        if ($i -lt $RepoArg.Count) {
+          $localPath = $RepoArg[$i]
+          Write-Host "[INFO] Указан локальный путь: $localPath" -ForegroundColor Cyan 
+        }
+      }
+      "-r" { 
+        $i++
+        if ($i -lt $RepoArg.Count) {
+          $localPath = $RepoArg[$i]
+          Write-Host "[INFO] Указан локальный путь: $localPath" -ForegroundColor Cyan 
+        }
+      }
     }
   }
 
