@@ -223,10 +223,24 @@ class RepositoryCreateSerializer(serializers.ModelSerializer):
 class CLIAuthMixin:
     """Миксин для добавления аутентификации через CLI (логин/пароль)"""
     
-    # Добавляем поля аутентификации
-    cli_username = serializers.CharField(required=False, write_only=True)
-    cli_password = serializers.CharField(required=False, write_only=True)
-    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+        # Динамически добавляем поля, если их еще нет
+        if not hasattr(self, 'cli_username'):
+            self.fields['cli_username'] = serializers.CharField(
+                required=False, 
+                write_only=True,
+                help_text="Имя пользователя для аутентификации через CLI"
+            )
+        
+        if not hasattr(self, 'cli_password'):
+            self.fields['cli_password'] = serializers.CharField(
+                required=False, 
+                write_only=True,
+                help_text="Пароль для аутентификации через CLI"
+            )
+
     def _authenticate_cli_user(self, data):
         """Аутентификация пользователя из данных CLI"""
         request = self.context.get('request')
@@ -279,8 +293,13 @@ class BranchCreateSerializer(CLIAuthMixin, serializers.Serializer):
         write_only=True,
         help_text="Public ID репозитория"
     )
+    name = serializers.CharField(
+        max_length=255,
+        min_length=1,
+        help_text="Имя ветки"
+    )
     check_permissions = serializers.BooleanField(default=True, write_only=True, required=False)
-
+    
     class Meta:
         model = Branch
         fields = [
@@ -310,6 +329,11 @@ class BranchCreateSerializer(CLIAuthMixin, serializers.Serializer):
                     'repository_public_id': 'У вас недостаточно прав для создания ветки в этом репозитории'
                 })
 
+            if Branch.objects.filter(repository=repository, name=data['name']).exists():
+                raise serializers.ValidationError({
+                    'name': 'Ветка с таким именем уже существует в этом репозитории'
+                })
+            
             data['repository'] = repository
             del data['repository_public_id']
             if 'check_permissions' in data:
