@@ -35,6 +35,17 @@ ergovcs <command> [options]
 Вспомогательные команды:
   create [--name <имя>] [--description <текст>] [--private] [--read-only] [--branch <ветка>] [--username <u>] [--password <p>] [--root <путь>]
     Создать новый репозиторий через API и подготовить локальные файлы
+
+  branch <list|create|delete|set-default> [опции]
+    Управление ветками (через API)
+    Примеры:
+      ergovcs branch list --repo <uuid>
+      ergovcs branch create --repo <uuid> --name <ветка> --username <u> --password <p>
+      ergovcs branch delete --id <branch_id>
+      ergovcs branch set-default --repo <uuid> --name <ветка>
+
+  files --repo <uuid>
+    Показать дерево файлов репозитория
     
   download --source <zip|dir> [--uuid <uuid>] [--name <имя>]
     Скачать/импортировать репозиторий из zip-архива или папки
@@ -43,7 +54,7 @@ ergovcs <command> [options]
     Установить CLI-обертку в System32 (ergovcs)
 
   uninstall-cli
-    Удалить CLI-обертку из System32
+    Удалить CLI-обертку из System32 (ergovcs)
     
   help
     Показать эту справку
@@ -58,8 +69,9 @@ ergovcs <command> [options]
   ergovcs push main
   ergovcs update main
   ergovcs remove abc-123-def-456
-  .\version_manager.ps1 create --name "Мой репозиторий"
-  .\version_manager.ps1 download --source "C:\path\to\repo.zip"
+  ergovcs create --name "Мой репозиторий"
+  ergovcs download --source "C:\path\to\repo.zip"
+  ergovcs files --repo <uuid>
   powershell -ExecutionPolicy Bypass -File .\version_manager.ps1 install-cli
   powershell -ExecutionPolicy Bypass -File .\version_manager.ps1 uninstall-cli
 "@ | Write-Host

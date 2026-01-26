@@ -121,6 +121,112 @@ api_create_repository() {
   api_request "POST" "/repositories/" "$body"
 }
 
+# Получить список репозиториев через API
+api_list_repositories() {
+  # Возвращает: JSON со списком репозиториев
+  api_request "GET" "/repositories/"
+}
+
+# Получить список веток репозитория
+api_list_branches() {
+  local repo_uuid="$1"
+  api_request "GET" "/repositories/$repo_uuid/branches/"
+}
+
+# Создать ветку
+api_create_branch() {
+  local repo_uuid="$1"
+  local branch_name="$2"
+  local cli_username="${3:-}"
+  local cli_password="${4:-}"
+  local check_permissions="${5:-true}"
+
+  local body
+  body="$(python3 - <<PY
+import json
+check_permissions = "${check_permissions}".lower() == "true"
+payload = {
+  "repository_public_id": "${repo_uuid}",
+  "name": "${branch_name}",
+  "check_permissions": check_permissions
+}
+if "${cli_username}":
+    payload["cli_username"] = "${cli_username}"
+if "${cli_password}":
+    payload["cli_password"] = "${cli_password}"
+print(json.dumps(payload))
+PY
+)"
+
+  api_request "POST" "/branches/" "$body"
+}
+
+# Установить ветку по умолчанию (по id)
+api_set_default_branch_by_id() {
+  local branch_id="$1"
+  local cli_username="${2:-}"
+  local cli_password="${3:-}"
+  local check_permissions="${4:-true}"
+
+  local body
+  body="$(python3 - <<PY
+import json
+check_permissions = "${check_permissions}".lower() == "true"
+payload = {
+  "branch_id": ${branch_id},
+  "check_permissions": check_permissions
+}
+if "${cli_username}":
+    payload["cli_username"] = "${cli_username}"
+if "${cli_password}":
+    payload["cli_password"] = "${cli_password}"
+print(json.dumps(payload))
+PY
+)"
+
+  api_request "POST" "/branches/set_default/" "$body"
+}
+
+# Установить ветку по умолчанию (по repo+name)
+api_set_default_branch_by_name() {
+  local repo_uuid="$1"
+  local branch_name="$2"
+  local cli_username="${3:-}"
+  local cli_password="${4:-}"
+  local check_permissions="${5:-true}"
+
+  local body
+  body="$(python3 - <<PY
+import json
+check_permissions = "${check_permissions}".lower() == "true"
+payload = {
+  "repository_public_id": "${repo_uuid}",
+  "branch_name": "${branch_name}",
+  "check_permissions": check_permissions
+}
+if "${cli_username}":
+    payload["cli_username"] = "${cli_username}"
+if "${cli_password}":
+    payload["cli_password"] = "${cli_password}"
+print(json.dumps(payload))
+PY
+)"
+
+  api_request "POST" "/branches/set_default/" "$body"
+}
+
+# Удалить ветку
+api_delete_branch() {
+  local branch_id="$1"
+  api_request "DELETE" "/branches/$branch_id/"
+}
+
+# Получить дерево файлов репозитория
+api_get_repo_files() {
+  local repo_uuid="$1"
+  api_request "GET" "/repositories/$repo_uuid/files/"
+}
+
 # Клонировать репозиторий через API
 api_clone_repository() {
   # TODO: Реализовать клонирование через API

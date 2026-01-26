@@ -32,6 +32,8 @@ main() {
     remove)    cmd_remove "$@" ;;
     create)    cmd_create "$@" ;;
     download)  cmd_download "$@" ;;
+    branch)    cmd_branch "$@" ;;
+    files)     cmd_files "$@" ;;
     install-cli) create_cli_wrapper "$SCRIPT_DIR/version_manager.sh" ;;
     uninstall-cli) remove_cli_wrapper ;;
     help|-h|--help) print_help ;;
