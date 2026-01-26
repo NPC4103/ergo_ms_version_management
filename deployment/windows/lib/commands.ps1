@@ -135,7 +135,7 @@ function Invoke-Clone {
 # Добавляет файл для коммита
 # ============================================================================
 function Invoke-Add {
-param([string[]]$Files)
+  param([string[]]$Files)
 
   # 1. Определить корень репозитория из пути
   $repoRoot = Find-LocalRepositoryRoot
