@@ -3,36 +3,144 @@
 
 # ============================================================================
 # Клонирование репозитория
-# Команда: ergovcs clone <UUID>
-# Копирует репозиторий из media/version_management/<UUID>/ на комп пользователя
+# Команда: ergovcs clone <путь> <имя_или_uuid>
 # ============================================================================
 cmd_clone() {
-  # TODO: Реализовать клонирование репозитория
-  # 1. Получить UUID из аргументов
-  # 2. Вызвать API эндпоинт /api/repositories/{id}/clone/
-  # 3. Скачать репозиторий на локальный компьютер
-  # 4. Сохранить информацию о клонированном репозитории (путь, UUID)
-  
-  local uuid=""
-  
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      *) uuid="$1" ;;
-    esac
-    shift || true
-  done
-  
-  if [[ -z "$uuid" ]]; then
-    echo "[ERROR] Необходимо указать UUID репозитория" >&2
-    echo "Использование: ergovcs clone <UUID>" >&2
-    exit 1
-  fi
-  
-  # TODO: Реализовать вызов API и клонирование
-  echo "[INFO] Клонирование репозитория $uuid..."
-  echo "[TODO] Реализовать вызов API /api/repositories/$uuid/clone/"
-  echo "[TODO] Скачать репозиторий на локальный компьютер"
+    local target_path="$1"
+    local repo_identifier="$2"
+    
+    # --- 1. Обработка аргументов ---
+    if [[ -z "$target_path" ]]; then
+        echo "[ERROR] Использование: ergovcs clone <путь_назначения> <имя_репозитория_или_uuid>"
+        return 1
+    fi
+
+    if [[ -z "$repo_identifier" ]]; then
+        repo_identifier="$target_path"
+        target_path="."
+    fi
+
+    # --- 2. Определение UUID (через API) ---
+    local uuid="$repo_identifier"
+    
+    # Проверка на формат UUID
+    if [[ ! "$repo_identifier" =~ ^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$ ]]; then
+        echo "[INFO] Поиск репозитория по имени: '$repo_identifier'..."
+        
+        local list_response
+        list_response=$(api_list_repositories)
+        
+        if [[ $? -ne 0 ]]; then
+            echo "[ERROR] Не удалось получить список репозиториев (API недоступен?)."
+            return 1
+        fi
+        
+        # Парсим JSON чтобы найти UUID по имени
+        uuid=$(echo "$list_response" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    # Обработка списка или пагинации {results: [...]}
+    repos = data.get('results', data) if isinstance(data, dict) else data
+    
+    found = ''
+    if isinstance(repos, list):
+        for r in repos:
+            if r.get('name') == '$repo_identifier':
+                found = r.get('public_id') or r.get('uuid')
+                break
+    print(found)
+except:
+    print('')
+")
+        
+        if [[ -z "$uuid" ]]; then
+            echo "[ERROR] Репозиторий с именем '$repo_identifier' не найден."
+            return 1
+        fi
+        echo "[INFO] Найден UUID: $uuid"
+    fi
+
+    # --- 3. Поиск папки media на диске ---
+    # Пытаемся найти папку media вверх по иерархии или в текущей папке
+    local media_root=""
+    local current_dir=$(pwd)
+    
+    # Простой поиск: проверяем текущую, родительскую и '..' до 3 уровней
+    for path in "." ".." "../.." "../../.."; do
+        if [[ -d "$path/media/version_management" ]]; then
+            media_root=$(cd "$path/media/version_management" && pwd)
+            break
+        fi
+    done
+    
+    # Если не нашли, проверяем переменную окружения
+    if [[ -z "$media_root" && -n "$ERGOVCS_MEDIA_PATH" ]]; then
+         media_root="$ERGOVCS_MEDIA_PATH"
+    fi
+
+    if [[ -z "$media_root" ]]; then
+        echo "[ERROR] Не удалось найти локальную папку 'media/version_management'."
+        echo "[HINT] Запустите команду из корня проекта бекенда или задайте ERGOVCS_MEDIA_PATH."
+        return 1
+    fi
+    
+    local source_repo_path="$media_root/$uuid"
+    
+    if [[ ! -d "$source_repo_path" ]]; then
+        echo "[ERROR] Папка репозитория не найдена на диске: $source_repo_path"
+        return 1
+    fi
+
+    # --- 4. Копирование файлов (Клонирование) ---
+    if [[ ! -d "$target_path" ]]; then
+        mkdir -p "$target_path"
+    fi
+    local abs_target_path
+    abs_target_path=$(cd "$target_path" && pwd)
+
+    echo "[INFO] Клонирование файлов из $source_repo_path..."
+    
+    # Копируем всё, кроме системных папок, если нужно (но cp -r копирует всё)
+    # Используем точку в конце source, чтобы содержимое копировалось В target
+    cp -r "$source_repo_path/." "$abs_target_path/"
+    
+    if [[ $? -ne 0 ]]; then
+        echo "[ERROR] Ошибка при копировании файлов."
+        return 1
+    fi
+
+    # --- 5. Сохранение конфига ---
+    local config_file="$HOME/.ergovcs/repos.json"
+    mkdir -p "$(dirname "$config_file")"
+    
+    python3 -c "
+import json, os, datetime
+file_path = '$config_file'
+entry = {
+    'uuid': '$uuid',
+    'local_path': '$abs_target_path',
+    'remote_path': '$source_repo_path',
+    'current_branch': 'main',
+    'last_updated': datetime.datetime.now().isoformat()
 }
+
+data = {'repositories': {}}
+if os.path.exists(file_path):
+    try:
+        with open(file_path, 'r') as f:
+            data = json.load(f)
+    except: pass
+
+if 'repositories' not in data: data['repositories'] = {}
+data['repositories']['$uuid'] = entry
+
+with open(file_path, 'w') as f:
+    json.dump(data, f, indent=2)
+"
+    echo "[OK] Репозиторий успешно клонирован в $abs_target_path"
+}
+
 
 # ============================================================================
 # Добавление файла для коммита
@@ -627,4 +735,3 @@ cmd_download() {
   echo "UUID:   $uuid"
   echo "Путь:   $target"
 }
-
