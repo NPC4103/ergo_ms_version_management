@@ -1047,10 +1047,15 @@ class BranchViewSet(viewsets.ModelViewSet):
 
                     # Создаем файл README.md ветке
                     readme_path = os.path.join(branch_path, 'README.md')
-                    with open(readme_path, 'w', encoding='utf-8') as f:
-                        f.write(f"# {branch.name}\n\n")
-                        f.write(f"{repository.description or 'No description provided.'}\n\n")
-                        
+                    if not os.path.exists(readme_path):
+                        with open(readme_path, 'w', encoding='utf-8') as f:
+                            f.write(f"# {branch.name}\n\n")
+                            f.write(f"{repository.description or 'No description provided.'}\n\n")
+                            f.write(f"Создана: {branch.created_at}\n")
+                        print(f"DEBUG: README.md создан")
+                    else:
+                        print(f"DEBUG: README.md уже существует, пропускаем создание")
+
                     # Создаем файл с информацией о начальном коммите
                     initial_commit_info = {
                         'hash': 'initial',
@@ -1062,9 +1067,26 @@ class BranchViewSet(viewsets.ModelViewSet):
                     }
                         
                     initial_commit_path = os.path.join(branch_path, 'commit.json')
-                    with open(initial_commit_path, 'w', encoding='utf-8') as f:
-                        json.dump(initial_commit_info, f, indent=2, ensure_ascii=False)
                     
+                    if not os.path.exists(initial_commit_path):
+                        with open(initial_commit_path, 'w', encoding='utf-8') as f:
+                            json.dump(initial_commit_info, f, indent=2, ensure_ascii=False)
+                        
+                        print(f"DEBUG: commit.json создан")
+                    else:
+                        # Можно обновить существующий файл (опционально)
+                        with open(initial_commit_path, 'r+', encoding='utf-8') as f:
+                            existing_data = json.load(f)
+                            # Обновляем нужные поля
+                            existing_data.update({
+                                'branch': branch.name,
+                                'updated_at': branch.created_at.isoformat()
+                            })
+                            f.seek(0)
+                            json.dump(existing_data, f, indent=2, ensure_ascii=False)
+                            f.truncate()
+                        print(f"DEBUG: commit.json обновлен")
+
                     response_data = BranchSerializer(branch, context={'request': request}).data
                     response_data['physical_path'] = branch_path
                     response_data['physical_created'] = True
