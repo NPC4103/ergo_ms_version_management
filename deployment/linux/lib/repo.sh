@@ -221,6 +221,12 @@ api_delete_branch() {
   api_request "DELETE" "/branches/$branch_id/"
 }
 
+# Получить дерево файлов репозитория
+api_get_repo_files() {
+  local repo_uuid="$1"
+  api_request "GET" "/repositories/$repo_uuid/files/"
+}
+
 # Клонировать репозиторий через API
 api_clone_repository() {
   # TODO: Реализовать клонирование через API

@@ -54,6 +54,7 @@ switch ($Command.ToLower()) {
   "create"   { Invoke-Create -RepoArg $Args }
   "download" { Invoke-Download -Args $Args }
   "branch"   { Invoke-Branch -Args $Args }
+  "files"    { Invoke-Files -Args $Args }
   "install-cli" { Install-CliWrapper }
   "uninstall-cli" { Uninstall-CliWrapper }
   "help"     { Show-Help }

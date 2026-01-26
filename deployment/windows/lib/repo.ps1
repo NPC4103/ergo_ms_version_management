@@ -224,6 +224,13 @@ function Invoke-ApiDeleteBranch {
   Invoke-ApiRequest -Method "DELETE" -Endpoint "/branches/$BranchId/"
 }
 
+# Получить дерево файлов репозитория
+function Invoke-ApiGetRepoFiles {
+  param([string]$RepoUuid)
+  Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/$RepoUuid/files/"
+}
+
+
 # Клонировать репозиторий через API
 function Invoke-ApiCloneRepository {
   param([string]$Uuid)

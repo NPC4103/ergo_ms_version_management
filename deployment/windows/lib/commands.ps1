@@ -322,15 +322,6 @@ function Invoke-Commit {
         # Игнорируем неизвестные параметры
       }
     }
-    "--message" { 
-      $i++
-      if ($i -lt $MessageArg.Count) {
-        $message = $MessageArg[$i]
-      }
-    }
-    default {
-      # Игнорируем неизвестные параметры
-    }
   }
 
   if ([string]::IsNullOrWhiteSpace($message)) {
@@ -827,4 +818,49 @@ switch ($action) {
     exit 1
   }
 }
+}
+
+# ============================================================================
+# Древо файлов репозитория
+# Команда: ergovcs files --repo <UUID>
+# ============================================================================
+function Invoke-Files {
+param([string[]]$Args)
+
+$repoUuid = $null
+for ($i = 0; $i -lt $Args.Count; $i++) {
+  switch ($Args[$i]) {
+    "--repo" { $i++; if ($i -lt $Args.Count) { $repoUuid = $Args[$i] } }
+  }
+}
+
+if (-not $repoUuid) {
+  Write-Host "[ERROR] Нужно указать --repo <UUID>" -ForegroundColor Red
+  exit 1
+}
+
+$response = Invoke-ApiGetRepoFiles -RepoUuid $repoUuid
+if (-not $response) { exit 1 }
+
+$data = $response | ConvertFrom-Json
+$items = if ($data.structure) { $data.structure } else { $data.items }
+
+function Render-Tree($items, $prefix) {
+  if (-not $items) { return }
+  for ($i = 0; $i -lt $items.Count; $i++) {
+    $item = $items[$i]
+    $isLast = ($i -eq $items.Count - 1)
+    $connector = if ($isLast) { "└── " } else { "├── " }
+    $name = $item.name
+    if ($item.is_directory) {
+      Write-Host "$prefix$connector$name/"
+      $nextPrefix = $prefix + (if ($isLast) { "    " } else { "│   " })
+      Render-Tree $item.items $nextPrefix
+    } else {
+      Write-Host "$prefix$connector$name"
+    }
+  }
+}
+
+Render-Tree $items ""
 }

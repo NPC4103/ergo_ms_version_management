@@ -977,3 +977,45 @@ PY
       ;;
   esac
 }
+
+# ============================================================================
+# Древо файлов репозитория
+# Команда: ergovcs files --repo <UUID>
+# ============================================================================
+cmd_files() {
+  local repo_uuid=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo) shift; repo_uuid="${1:-}" ;;
+      *) echo "[WARN] Неизвестный параметр: $1" >&2 ;;
+    esac
+    shift || true
+  done
+
+  if [[ -z "$repo_uuid" ]]; then
+    echo "[ERROR] Нужно указать --repo <UUID>" >&2
+    exit 1
+  fi
+
+  local response
+  response="$(api_get_repo_files "$repo_uuid")" || exit 1
+
+  echo "$response" | python3 - <<'PY'
+import json, sys
+
+def render(items, prefix=""):
+    for i, item in enumerate(items):
+        is_last = (i == len(items) - 1)
+        connector = "└── " if is_last else "├── "
+        name = item.get("name", "")
+        if item.get("is_directory"):
+            print(f"{prefix}{connector}{name}/")
+            render(item.get("items") or [], prefix + ("    " if is_last else "│   "))
+        else:
+            print(f"{prefix}{connector}{name}")
+
+data = json.load(sys.stdin)
+root_items = data.get("structure") or data.get("items") or []
+render(root_items)
+PY
+}
