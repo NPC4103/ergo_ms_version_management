@@ -92,6 +92,22 @@ const trend = computed(() => {
   return calculateLinearRegression(values);
 });
 
+const normalizedTrend = computed(() => {
+  if (!props.commits || props.commits.length < 2) return 0;
+  
+  const daily = groupByDay(props.commits);
+  const values = Object.keys(daily)
+    .sort()
+    .map(d => daily[d]);
+  
+  if (values.length < 2) return 0;
+  
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  if (mean === 0) return 0;
+  
+  return trend.value.slope / mean;
+});
+
 const chartData = computed(() => {
   if (!props.commits || props.commits.length === 0) return { labels: [], datasets: [] };
   
@@ -139,16 +155,16 @@ const chartData = computed(() => {
 });
 
 const rhythmClass = computed(() => {
-  const slope = trend.value.slope;
-  if (slope > 0.05) return 'bg-success';
-  if (slope < -0.05) return 'bg-danger';
+  const ct = normalizedTrend.value;
+  if (ct > 0.15) return 'bg-success';
+  if (ct < -0.15) return 'bg-danger';
   return 'bg-info';
 });
 
 const rhythmType = computed(() => {
-  const slope = trend.value.slope;
-  if (slope > 0.05) return 'Рост';
-  if (slope < -0.05) return 'Падение';
+  const ct = normalizedTrend.value;
+  if (ct > 0.15) return 'Рост';
+  if (ct < -0.15) return 'Падение';
   return 'Стабильно';
 });
 
