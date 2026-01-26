@@ -95,6 +95,31 @@
           :period="period" 
         />
       </div>
+
+      <!-- Row 3: Technology Stack & Modernity -->
+      <div class="col-lg-6">
+        <TechnologyStack 
+          :key="`tsd-${filteredCommits.length}`"
+          :commits="filteredCommits" 
+          :period="period" 
+        />
+      </div>
+      <div class="col-lg-6">
+        <ModernityIndex 
+          :key="`mti-${filteredCommits.length}`"
+          :commits="filteredCommits" 
+          :period="period" 
+        />
+      </div>
+
+      <!-- Row 4: Semantic Changes (Full Width) -->
+      <div class="col-lg-12">
+        <SemanticChange 
+          :key="`csci-${filteredCommits.length}`"
+          :commits="filteredCommits" 
+          :period="period" 
+        />
+      </div>
     </div>
 
   </div>
@@ -109,6 +134,9 @@ import { useToast } from 'vue-toastification';
 import CommitFrequency from './dashboardMetricsComponents/CommitFrequency.vue';
 import ActivityTrend from './dashboardMetricsComponents/ActivityTrend.vue';
 import Burstiness from './dashboardMetricsComponents/Burstiness.vue';
+import TechnologyStack from './dashboardMetricsComponents/TechnologyStack.vue';
+import ModernityIndex from './dashboardMetricsComponents/ModernityIndex.vue';
+import SemanticChange from './dashboardMetricsComponents/SemanticChange.vue';
 
 const route = useRoute();
 const toast = useToast();
@@ -188,16 +216,27 @@ const generateMockCommits = (days = 30) => {
   const commits = [];
   const now = new Date();
   const authors = ['User #1', 'User #2', 'User #3', 'Developer Team'];
+  
+  // РЕАЛИСТИЧНЫЕ сообщения с расширениями файлов
   const messages = [
-    'Добавлена поддержка метрик',
-    'Исправлена ошибка в загрузке',
-    'Обновлена документация',
-    'Оптимизация производительности',
-    'Добавлены тесты',
-    'Рефакторинг кода',
-    'Исправлен баг в API',
-    'Добавлена валидация'
+    'Fix: исправлена ошибка в app.ts и components.tsx',
+    'Feat: добавлена поддержка в utils.js и helpers.py',
+    'Refactor: переработан код в service.ts и handler.go',
+    'Docs: обновлена документация в README.md и index.html',
+    'Style: форматирование config.json и settings.yaml',
+    'Test: добавлены тесты в spec.ts и test.py',
+    'Build: обновлены зависимости в package.json и requirements.txt',
+    'Perf: оптимизация worker.rs и processor.cpp',
+    'CI: обновлена конфиг в .github/workflows и Dockerfile',
+    'Chore: обновление vendor packages.php и gems.rb',
+    'Update: migration в schema.sql и models.java',
+    'Fix API: обновлены endpoints в api.ts и serializers.py',
+    'UI: компоненты Button.vue и Modal.jsx',
+    'Database: script в migration_001.sql и seed.py',
+    'Security: патч в auth.cs и security.java',
+    'Deploy: скрипты в deploy.sh и config.yml'
   ];
+  
   const branchList = ['main', 'develop', 'feature/metrics'];
   const branchDistribution = {
     'main': 0.5,
@@ -216,7 +255,6 @@ const generateMockCommits = (days = 30) => {
         const commitDate = new Date(date);
         commitDate.setHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0);
         
-        // Выбираем ветку с учетом распределения
         let selectedBranch = 'main';
         const rand = Math.random();
         if (rand < branchDistribution['main']) {

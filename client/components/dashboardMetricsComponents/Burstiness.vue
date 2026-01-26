@@ -2,38 +2,38 @@
   <div class="card metric-card shadow-sm">
     <div class="card-body">
       <h6 class="card-title mb-3">Ритм коммитов (CB)</h6>
-      <p class="text-muted small mb-4">Показывает, как часто и равномерно разработчики делают коммиты</p>
+      <p class="text-muted small mb-4">Анализ скоплений активности разработки</p>
       
       <div class="metric-display mb-4">
-        <div class="metric-value">{{ cbValue }}</div>
-        <div class="metric-label">стандартное отклонение</div>
+        <div class="metric-value">{{ cbValue }}%</div>
+        <div class="metric-label">нерегулярность разработки</div>
       </div>
       
       <div class="rhythm-card">
         <div class="rhythm-header">
-          <span class="rhythm-label">Тип ритма:</span>
-          <span class="badge" :class="rhythmClass">{{ rhythmType }}</span>
+          <span class="rhythm-label">Стиль разработки:</span>
+          <span class="badge" :class="intensityClass">{{ intensityLabel }}</span>
         </div>
-        <p class="rhythm-description">{{ rhythmDescription }}</p>
+        <p class="rhythm-description">{{ intensityDescription }}</p>
         
         <div class="rhythm-info">
           <div class="info-block">
-            <span class="info-title">Среднее время между коммитами</span>
-            <span class="info-value">{{ averageInterval }}</span>
-            <p class="info-hint">Разработчики делают коммиты примерно каждые {{ averageInterval }}</p>
+            <span class="info-title">Рабочих сессий</span>
+            <span class="info-value">{{ metrics.sessions }}</span>
+            <p class="info-hint">Количество отдельных периодов разработки</p>
           </div>
           
           <div class="info-block">
-            <span class="info-title">Всего коммитов в период</span>
-            <span class="info-value">{{ commits.length }}</span>
-            <p class="info-hint">Анализируется активность за выбранный период</p>
+            <span class="info-title">Типичный перерыв</span>
+            <span class="info-value">{{ averageInterval }}</span>
+            <p class="info-hint">Среднее время между сессиями</p>
           </div>
         </div>
 
         <div class="explanation-box">
           <p class="explanation-title">Что это означает:</p>
           <p class="explanation-text">
-            {{ explanationText }}
+            {{ intensityDescription }}
           </p>
         </div>
       </div>
@@ -55,54 +55,162 @@ const props = defineProps({
   }
 });
 
-const calculateMetrics = () => {
-  if (!props.commits || props.commits.length < 2) {
-    return { burstiness: 0, avgInterval: 0 };
+// Шаг 1: Подготовка timestamps
+const getTimestamps = () => {
+  return props.commits
+    .map(c => new Date(c.created_at).getTime())
+    .filter(t => Number.isFinite(t))
+    .sort((a, b) => a - b);
+};
+
+// Шаг 2: Группировка в рабочие сессии (45 минут = один gap)
+const getWorkSessions = (times) => {
+  if (times.length === 0) return [];
+  
+  const SESSION_GAP = 45 * 60 * 1000; // 45 минут в мс
+  const sessions = [];
+  let current = [times[0]];
+  
+  for (let i = 1; i < times.length; i++) {
+    if (times[i] - times[i - 1] <= SESSION_GAP) {
+      current.push(times[i]);
+    } else {
+      sessions.push(current);
+      current = [times[i]];
+    }
+  }
+  sessions.push(current);
+  
+  return sessions;
+};
+
+// Шаг 3: Интервалы между сессиями
+const getSessionGaps = (sessions) => {
+  const gaps = [];
+  
+  for (let i = 1; i < sessions.length; i++) {
+    const prevEnd = sessions[i - 1][sessions[i - 1].length - 1];
+    const nextStart = sessions[i][0];
+    gaps.push(nextStart - prevEnd);
   }
   
+  return gaps;
+};
+
+// Квантиль (для IQR)
+const quantile = (arr, q) => {
+  if (arr.length === 0) return 0;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const pos = (sorted.length - 1) * q;
+  const base = Math.floor(pos);
+  const rest = pos - base;
+  
+  if (sorted[base + 1] !== undefined) {
+    return sorted[base] + rest * (sorted[base + 1] - sorted[base]);
+  }
+  return sorted[base];
+};
+
+// Медиана
+const median = (arr) => quantile(arr, 0.5);
+
+// Шаг 4: IQR-фильтрация выбросов
+const filterOutliers = (gaps) => {
+  if (gaps.length <= 3) return gaps; // Мало данных - не фильтруем
+  
+  const q1 = quantile(gaps, 0.25);
+  const q3 = quantile(gaps, 0.75);
+  const iqr = q3 - q1;
+  
+  return gaps.filter(x => x >= q1 - 1.5 * iqr && x <= q3 + 1.5 * iqr);
+};
+
+// Шаг 5 & 6: Расчёт burstiness через MAD (Median Absolute Deviation)
+const calculateBurstiness = () => {
   try {
-    const times = props.commits
-      .map(c => {
-        if (!c || !c.created_at) return null;
-        return new Date(c.created_at).getTime();
-      })
-      .filter(t => t !== null)
-      .sort((a, b) => a - b);
+    const times = getTimestamps();
     
-    if (times.length < 2) return { burstiness: 0, avgInterval: 0 };
+    if (times.length < 2) return { burstiness: 0, sessions: 0, avgGap: 0 };
     
-    const intervals = [];
-    for (let i = 1; i < times.length; i++) {
-      intervals.push(times[i] - times[i - 1]);
-    }
+    const sessions = getWorkSessions(times);
     
-    const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-    const variance = intervals.reduce((s, x) => s + (x - avgInterval) ** 2, 0) / intervals.length;
-    const stddev = Math.sqrt(variance);
+    if (sessions.length < 2) return { burstiness: 0, sessions: sessions.length, avgGap: 0 };
     
-    return { 
-      burstiness: isFinite(stddev) ? stddev : 0,
-      avgInterval: isFinite(avgInterval) ? avgInterval : 0
+    // Получаем интервалы между сессиями
+    let gaps = getSessionGaps(sessions);
+    
+    if (gaps.length === 0) return { burstiness: 0, sessions: sessions.length, avgGap: 0 };
+    
+    // Фильтруем выбросы
+    const filtered = filterOutliers(gaps);
+    
+    if (filtered.length === 0) filtered = gaps; // Если все отфильтровались, берем оригинальные
+    
+    // Считаем медиану и MAD
+    const med = median(filtered);
+    
+    if (med === 0) return { burstiness: 0, sessions: sessions.length, avgGap: 0 };
+    
+    const mad = median(filtered.map(x => Math.abs(x - med)));
+    
+    // Финальная метрика: burstiness = MAD / median
+    const burstiness = mad / med;
+    
+    return {
+      burstiness: isFinite(burstiness) ? burstiness : 0,
+      sessions: sessions.length,
+      avgGap: med
     };
   } catch (e) {
-    console.error('Ошибка расчета CB:', e);
-    return { burstiness: 0, avgInterval: 0 };
+    console.error('Ошибка расчета burstiness:', e);
+    return { burstiness: 0, sessions: 0, avgGap: 0 };
   }
 };
 
-const metrics = computed(() => calculateMetrics());
+const metrics = computed(() => calculateBurstiness());
 
+// Интерпретация по новой шкале
 const cbValue = computed(() => {
-  const ms = metrics.value.burstiness;
-  const minutes = ms / (1000 * 60);
+  // Конвертируем в процент нерегулярности (0-100%)
+  const b = metrics.value.burstiness;
+  const percent = Math.min(100, (b / 2) * 100); // Нормализуем: 2.0 = 100%
+  return Math.round(percent);
+});
+
+const intensityClass = computed(() => {
+  const b = metrics.value.burstiness;
   
-  if (minutes < 1) return '< 1';
-  if (minutes < 60) return Math.round(minutes);
-  return Math.round(minutes / 60) + ' ч';
+  if (b < 0.3) return 'bg-success';
+  if (b < 0.7) return 'bg-info';
+  if (b < 1.5) return 'bg-warning';
+  return 'bg-danger';
+});
+
+const intensityLabel = computed(() => {
+  const b = metrics.value.burstiness;
+  
+  if (b < 0.3) return 'Равномерная';
+  if (b < 0.7) return 'Смешанная';
+  if (b < 1.5) return 'Сессионная';
+  return 'Кластеризованная';
+});
+
+const intensityDescription = computed(() => {
+  const b = metrics.value.burstiness;
+  
+  if (b < 0.3) {
+    return 'Идеально равномерная разработка. Коммиты распределены очень стабильно во времени.';
+  } else if (b < 0.7) {
+    return 'Смешанный стиль разработки. Периодические сессии работы с нормальными паузами.';
+  } else if (b < 1.5) {
+    return 'Явно сессионная работа. Четкие периоды активности разделены длительными паузами.';
+  } else {
+    return 'Резко кластеризованная активность. Краткие всплески работы в непредсказуемое время.';
+  }
 });
 
 const averageInterval = computed(() => {
-  const ms = metrics.value.avgInterval;
+  const ms = metrics.value.avgGap;
   
   if (ms < 1000 * 60) {
     return Math.round(ms / 1000) + ' сек';
@@ -114,53 +222,6 @@ const averageInterval = computed(() => {
   } else {
     const days = Math.round(ms / (1000 * 60 * 60 * 24) * 10) / 10;
     return days + ' дн';
-  }
-});
-
-const rhythmClass = computed(() => {
-  const minutes = metrics.value.burstiness / (1000 * 60);
-  
-  if (minutes < 5) return 'bg-success';
-  if (minutes < 30) return 'bg-info';
-  if (minutes < 120) return 'bg-warning';
-  return 'bg-danger';
-});
-
-const rhythmType = computed(() => {
-  const minutes = metrics.value.burstiness / (1000 * 60);
-  
-  if (minutes < 5) return 'Регулярный';
-  if (minutes < 30) return 'Стандартный';
-  if (minutes < 120) return 'Нерегулярный';
-  return 'Хаотичный';
-});
-
-const rhythmDescription = computed(() => {
-  const minutes = metrics.value.burstiness / (1000 * 60);
-  
-  if (minutes < 5) {
-    return 'Коммиты распределены очень равномерно. Разработка идет предсказуемо и планомерно.';
-  } else if (minutes < 30) {
-    return 'Коммиты происходят достаточно регулярно. Разработка идет стабильно в течение рабочего дня.';
-  } else if (minutes < 120) {
-    return 'Коммиты происходят не равномерно. Есть периоды интенсивной разработки и спокойствия.';
-  } else {
-    return 'Коммиты очень редкие и непредсказуемые. Возможна багетчинг (накопление и фиксация всех изменений сразу).';
-  }
-});
-
-const explanationText = computed(() => {
-  const minutes = metrics.value.burstiness / (1000 * 60);
-  const avgMin = metrics.value.avgInterval / (1000 * 60);
-  
-  if (minutes < 5) {
-    return `Разработчик делает маленькие, частые коммиты каждые ${Math.round(avgMin)} минут. Это хороший знак - код легче понять, проще найти баги, легче откатывать изменения. Профессиональный подход.`;
-  } else if (minutes < 30) {
-    return `Коммиты происходят примерно каждые ${averageInterval.value}. Это нормальный рабочий ритм - разработчики делают коммиты по завершении логических блоков работы. Стабильный и предсказуемый процесс.`;
-  } else if (minutes < 120) {
-    return `Разработчик чередует периоды активности и покоя. Возможно, работает над сложной фичей несколько часов, потом делает один большой коммит. Нормально, но можно улучшить.`;
-  } else {
-    return `Коммиты редкие (в среднем каждые ${averageInterval.value}). Вероятно, разработчик долго работает локально, а потом заливает всё сразу. Сложнее находить проблемы в таком коде. Рекомендуется более частые коммиты.`;
   }
 });
 </script>

@@ -75,8 +75,8 @@
                         <span class="d-flex align-items-center gap-2"><Folder :size="16" /> Файлы</span>
                         <span class="arrow">›</span>
                     </div>
-                    <div class="action-item" @click="showCommitsModal = true; closeMenu()">
-                        <span class="d-flex align-items-center gap-2"><History :size="16" /> Коммиты</span>
+                    <div class="action-item" @click="goToCommitGraph">
+                        <span class="d-flex align-items-center gap-2"><History :size="16" /> История коммитов</span>
                     </div>
                     <div class="action-item" @click="copyCloneUrl">
                         <span class="d-flex align-items-center gap-2"><Link :size="16" /> Копировать ссылку</span>
@@ -276,10 +276,11 @@ const closeSubmenu = () => { activeSubmenu.value = null; };
 const closeMenu = () => { showActionsMenu.value = false; showReleases.value = false; activeSubmenu.value = null; };
 const toggleScroll = () => { isExpanded.value = !isExpanded.value; };
 const selectBranch = (n) => { currentBranch.value = n; };
-const copyCloneUrl = () => { navigator.clipboard.writeText(`${window.location.origin}/git/${repo.value?.name}.git`); toast.success('Ссылка скопирована!'); closeMenu(); };
+const copyCloneUrl = () => { navigator.clipboard.writeText(`${window.location.origin}/versionmanagement/repo/${repo.value?.public_id}`); toast.success('Ссылка скопирована!'); closeMenu(); };
 const createNewFile = () => { toast.info('Создание файла...'); closeMenu(); };
 const uploadFile = () => { toast.info('Загрузка файлов...'); closeMenu(); };
 const goToSettings = () => { closeMenu(); router.push({ name: 'RepositorySettings', params: { id: repoId } }); };
+const goToCommitGraph = () => { closeMenu(); router.push({ name: 'CommitGraph', params: { id: repoId } }); };
 
 // Releases
 const openCreateReleaseModal = () => { showCreateReleaseModal.value = true; closeMenu(); };
