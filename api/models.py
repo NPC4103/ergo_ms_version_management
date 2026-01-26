@@ -130,6 +130,12 @@ class Collaborator(models.Model):
     user_id = models.IntegerField(
         help_text="ID пользователя-коллаборатора"
     )
+    username = models.CharField(  # ← НОВОЕ ПОЛЕ
+        max_length=150,
+        help_text="Имя пользователя (username) коллаборатора",
+        blank=True,
+        null=True
+    )
     role = models.CharField(
         max_length=20,
         choices=ROLE_CHOICES,
@@ -152,9 +158,11 @@ class Collaborator(models.Model):
         indexes = [
             models.Index(fields=['repository', 'user_id']),
             models.Index(fields=['user_id']),
+            models.Index(fields=['username']),
         ]
     def __str__(self):
-        return f"Коллаборатор {self.user_id} в {self.repository.name}"
+        username = self.username or f"User#{self.user_id}"
+        return f"Коллаборатор {username} в {self.repository.name}"
 
     def clean(self):
         """Валидация роли коллаборатора"""
