@@ -30,6 +30,8 @@
       </div>
 
       <div class="d-flex gap-2 position-relative">
+         
+
            <!-- Releases Menu -->
            <div class="releases-menu" ref="releasesMenu">
                 <button class="btn btn-warning d-flex align-items-center gap-2" @click="toggleReleases">
@@ -73,8 +75,8 @@
                         <span class="d-flex align-items-center gap-2"><Folder :size="16" /> Файлы</span>
                         <span class="arrow">›</span>
                     </div>
-                    <div class="action-item" @click="showCommitsModal = true; closeMenu()">
-                        <span class="d-flex align-items-center gap-2"><History :size="16" /> Коммиты</span>
+                    <div class="action-item" @click="goToCommitGraph">
+                        <span class="d-flex align-items-center gap-2"><History :size="16" /> История коммитов</span>
                     </div>
                     <div class="action-item" @click="copyCloneUrl">
                         <span class="d-flex align-items-center gap-2"><Link :size="16" /> Копировать ссылку</span>
@@ -97,6 +99,57 @@
                 </div>
             </transition>
           </div>
+      </div>
+    </div>
+
+    <!-- Stats Card -->
+    <div class="stats-card card mb-3">
+      <div class="stats-container">
+        <router-link :to="{ name: 'MetricsDashboard', params: { id: repo.id } }" class="stat-item stat-metrics">
+          <div class="stat-icon">
+            <BarChart3 :size="20" />
+          </div>
+          <div class="stat-content">
+            <div class="stat-label">Метрики репозитория</div>
+            <div class="stat-value">Перейти →</div>
+          </div>
+        </router-link>
+
+        <div class="stat-divider"></div>
+
+        <div class="stat-item">
+          <div class="stat-icon">
+            <History :size="20" />
+          </div>
+          <div class="stat-content">
+            <div class="stat-label">Всего коммитов</div>
+            <div class="stat-value">{{ commits.length || 0 }}</div>
+          </div>
+        </div>
+
+        <div class="stat-divider"></div>
+
+        <div class="stat-item">
+          <div class="stat-icon">
+            <GitBranch :size="20" />
+          </div>
+          <div class="stat-content">
+            <div class="stat-label">Активных веток</div>
+            <div class="stat-value">{{ branches.length }}</div>
+          </div>
+        </div>
+
+        <div class="stat-divider"></div>
+
+        <div class="stat-item">
+          <div class="stat-icon">
+            <FileText :size="20" />
+          </div>
+          <div class="stat-content">
+            <div class="stat-label">Файлов в репо</div>
+            <div class="stat-value">{{ files.length }}</div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -180,7 +233,7 @@ import { useToast } from 'vue-toastification';
 import CommitList from './CommitList.vue';
 import { 
     ArrowLeft, GitBranch, Folder, FileText, History, Link, Settings, 
-    FilePlus, Upload, ChevronDown, FolderOpen, X, Tag, Download 
+    FilePlus, Upload, ChevronDown, FolderOpen, X, Tag, Download, BarChart3
 } from 'lucide-vue-next';
 
 const route = useRoute();
@@ -206,6 +259,7 @@ const showCreateReleaseModal = ref(false);
 const branches = ref([{ name: 'main' }]);
 const currentBranch = ref('main');
 const files = ref([]); 
+const commits = ref([]);
 const releases = ref([]);
 const newRelease = ref({ tag_name: '', name: '', body: '' });
 
@@ -222,10 +276,11 @@ const closeSubmenu = () => { activeSubmenu.value = null; };
 const closeMenu = () => { showActionsMenu.value = false; showReleases.value = false; activeSubmenu.value = null; };
 const toggleScroll = () => { isExpanded.value = !isExpanded.value; };
 const selectBranch = (n) => { currentBranch.value = n; };
-const copyCloneUrl = () => { navigator.clipboard.writeText(`${window.location.origin}/git/${repo.value?.name}.git`); toast.success('Ссылка скопирована!'); closeMenu(); };
+const copyCloneUrl = () => { navigator.clipboard.writeText(`${window.location.origin}/versionmanagement/repo/${repo.value?.public_id}`); toast.success('Ссылка скопирована!'); closeMenu(); };
 const createNewFile = () => { toast.info('Создание файла...'); closeMenu(); };
 const uploadFile = () => { toast.info('Загрузка файлов...'); closeMenu(); };
 const goToSettings = () => { closeMenu(); router.push({ name: 'RepositorySettings', params: { id: repoId } }); };
+const goToCommitGraph = () => { closeMenu(); router.push({ name: 'CommitGraph', params: { id: repoId } }); };
 
 // Releases
 const openCreateReleaseModal = () => { showCreateReleaseModal.value = true; closeMenu(); };
@@ -299,6 +354,20 @@ h1 { margin: 0; }
     background-color: #dc2626 !important;
     color: #ffffff !important;
     border-color: #dc2626 !important;
+}
+
+/* Metrics Button */
+.btn-info {
+    background-color: #3b82f6 !important;
+    border-color: #3b82f6 !important;
+    color: #ffffff !important;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+.btn-info:hover {
+    background-color: #2563eb !important;
+    border-color: #2563eb !important;
+    color: #ffffff !important;
 }
 
 /* Public Badge */
@@ -436,4 +505,100 @@ h1 { margin: 0; }
 .modal-close { background: none; border: none; cursor: pointer; }
 .modal-close:hover { opacity: 0.7; }
 .modal-body { padding: 20px; overflow-y: auto; }
+
+/* Stats Card */
+.stats-card {
+    border: none !important;
+    background: var(--bs-card-bg);
+    padding: 16px 20px !important;
+    border-radius: 8px;
+}
+
+.stats-container {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    justify-content: space-around;
+}
+
+.stat-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-decoration: none;
+    color: inherit;
+    flex: 1;
+}
+
+.stat-item:hover {
+    background: var(--bs-tertiary-bg);
+    transform: translateY(-2px);
+}
+
+.stat-metrics {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%);
+}
+
+.stat-metrics:hover {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.2) 0%, rgba(139, 92, 246, 0.2) 100%);
+}
+
+.stat-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 6px;
+    background: rgba(59, 130, 246, 0.15);
+    color: #3b82f6;
+    flex-shrink: 0;
+}
+
+.stat-metrics .stat-icon {
+    background: rgba(59, 130, 246, 0.2);
+    color: #3b82f6;
+}
+
+.stat-content {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.stat-label {
+    font-size: 0.85rem;
+    font-weight: 500;
+    opacity: 0.7;
+}
+
+.stat-value {
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: #3b82f6;
+}
+
+.stat-divider {
+    width: 1px;
+    height: 40px;
+    background: var(--bs-border-color);
+    opacity: 0.3;
+}
+
+/* Light theme stats card */
+[data-bs-theme="light"] .stat-item:hover {
+    background: #f0f0f0;
+}
+
+[data-bs-theme="light"] .stat-metrics {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(139, 92, 246, 0.08) 100%);
+}
+
+[data-bs-theme="light"] .stat-metrics:hover {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(139, 92, 246, 0.15) 100%);
+}
 </style>

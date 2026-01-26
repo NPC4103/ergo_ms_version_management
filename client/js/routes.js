@@ -46,6 +46,15 @@ export default {
                 },
             },
             {
+                path: 'repo/:id/graph',
+                name: 'CommitGraph',
+                component:
+                    '@/modules/version_management/client/components/CommitGraph.vue',
+                meta: {
+                    title: 'История коммитов',
+                },
+            },
+            {
                 path: 'repo/:id/commits/create',
                 name: 'CommitCreate',
                 component:
@@ -61,6 +70,14 @@ export default {
                     '@/modules/version_management/client/components/CommitDetail.vue',
                 meta: {
                     title: 'Детали коммита',
+                },
+            },
+            {
+                path: 'repo/:id/metrics',
+                name: 'MetricsDashboard',
+                component: '@/modules/version_management/client/components/MetricsDashboard.vue',
+                meta: {
+                    title: 'Метрики репозитория',
                 },
             },
         ],

@@ -959,6 +959,25 @@ class RepositoryViewSet(viewsets.ModelViewSet):
             'collaborator': serializer.data
         })
 
+    @action(detail=True, methods=['get'], url_path='files')
+    def get_files(self, request, public_id=None):
+
+        instance = self.get_object()
+
+        # Путь: media/version_management/{repo_uuid}/
+        repo_path = os.path.join(settings.MEDIA_ROOT, 'version_management', str(instance.public_id))
+
+        if not os.path.exists(repo_path):
+
+            return Response({"error": "Папка репозитория не найдена"}, status=404)
+
+        structure = get_directory_structure(repo_path)
+
+        return Response({
+            "repository": instance.name,
+            "structure": structure
+        })
+
 
 class BranchViewSet(viewsets.ModelViewSet):
     """
@@ -1157,6 +1176,70 @@ class BranchViewSet(viewsets.ModelViewSet):
                 'is_default': branch.is_default
             }
         })
+
+    @action(detail=True, methods=['get'], url_path='files')
+    def get_files(self, request, pk=None):
+
+        branch = self.get_object()
+
+        repo_uuid = str(branch.repository.public_id)
+
+        # Путь: media/version_management/{repo_uuid}/{branch_name}/
+        # Если у тебя файлы веток лежат в папках с названиями веток
+
+        branch_path = os.path.join(settings.MEDIA_ROOT, 'version_management', repo_uuid, branch.name)
+        
+        if not os.path.exists(branch_path):
+
+            # Если папки ветки нет, возможно файлы общие в корне репо? 
+
+            # Тут подправь путь под свою реальную структуру папок
+
+            return Response({"error": "Папка ветки не найдена"}, status=404)
+
+        structure = get_directory_structure(branch_path)
+
+        return Response({
+
+            "repository": branch.repository.name,
+
+            "branch": branch.name,
+
+            "structure": structure
+
+        })
+
+
+
+def get_directory_structure(root_path):
+    """
+    Рекурсивно собирает дерево файлов и папок.
+    """
+    items = []
+
+    try:
+
+        for entry in os.scandir(root_path):
+
+            item = {
+
+                "name": entry.name,
+
+                "is_directory": entry.is_dir(),
+
+                "size": entry.stat().st_size if entry.is_file() else None,
+
+                "items": get_directory_structure(entry.path) if entry.is_dir() else []
+
+            }
+
+            items.append(item)
+
+    except FileNotFoundError:
+
+        return []
+
+    return items
 
 
 class CollaboratorViewSet(viewsets.ModelViewSet):
