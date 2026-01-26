@@ -63,6 +63,14 @@ export default {
                     title: 'Детали коммита',
                 },
             },
+            {
+                path: 'repo/:id/metrics',
+                name: 'MetricsDashboard',
+                component: '@/modules/version_management/client/components/MetricsDashboard.vue',
+                meta: {
+                    title: 'Метрики репозитория',
+                },
+            },
         ],
     },
 };
