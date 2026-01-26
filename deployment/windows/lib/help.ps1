@@ -33,11 +33,17 @@ ergovcs <command> [options]
     Примечание: удаляет только локальную копию, не репозиторий на сервере
 
 Вспомогательные команды:
-  create [--name <имя>] [--description <текст>]
-    Создать новый репозиторий
+  create [--name <имя>] [--description <текст>] [--private] [--read-only] [--branch <ветка>] [--username <u>] [--password <p>] [--root <путь>]
+    Создать новый репозиторий через API и подготовить локальные файлы
     
   download --source <zip|dir> [--uuid <uuid>] [--name <имя>]
     Скачать/импортировать репозиторий из zip-архива или папки
+
+  install-cli
+    Установить CLI-обертку в System32 (ergovcs)
+
+  uninstall-cli
+    Удалить CLI-обертку из System32
     
   help
     Показать эту справку
@@ -54,6 +60,8 @@ ergovcs <command> [options]
   ergovcs remove abc-123-def-456
   .\version_manager.ps1 create --name "Мой репозиторий"
   .\version_manager.ps1 download --source "C:\path\to\repo.zip"
+  powershell -ExecutionPolicy Bypass -File .\version_manager.ps1 install-cli
+  powershell -ExecutionPolicy Bypass -File .\version_manager.ps1 uninstall-cli
 "@ | Write-Host
 }
 

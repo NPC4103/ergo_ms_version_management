@@ -56,6 +56,9 @@
 chmod +x ergovcs
 chmod +x linux/version_manager.sh
 
+# (опционально) установить CLI-обёртку в /usr/local/bin (нужны права sudo)
+sudo ./linux/version_manager.sh install-cli
+
 # (опционально) добавить каталог утилиты в PATH
 export PATH="$PATH:/path/to/ergo_ms_core/modules/version_management/deployment"
 
@@ -77,6 +80,9 @@ ergovcs download --source /path/to/repo.zip --uuid <uuid>
 ```powershell
 # (опционально) добавить каталог утилиты в PATH для текущей сессии
 $env:PATH += ";C:\Users\user\Project\ergo_ms_core\modules\version_management\deployment"
+
+# (опционально) установить CLI-обёртку в System32 (нужны права администратора)
+powershell -ExecutionPolicy Bypass -File .\windows\version_manager.ps1 install-cli
 
 # Основные команды (через ergovcs)
 ergovcs clone abc-123-def-456

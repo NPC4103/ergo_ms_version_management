@@ -3,6 +3,7 @@
 
 PROJECT_ROOT=""
 MEDIA_DIR=""
+CLI_NAME="ergovcs"
 
 detect_project_root() {
   local start="$(pwd)"
@@ -28,5 +29,13 @@ import uuid
 print(uuid.uuid4())
 PY
   fi
+}
+
+cli_name() {
+  echo "$CLI_NAME"
+}
+
+cli_path() {
+  echo "/usr/local/bin/$(cli_name)"
 }
 

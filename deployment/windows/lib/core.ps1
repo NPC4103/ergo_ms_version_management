@@ -2,6 +2,8 @@
 
 $script:ProjectRoot = $null
 $script:MediaDir = $null
+$script:CliName = 'ergovcs'
+$script:CliPath = "$env:SystemRoot\System32\$script:CliName.bat"
 
 function Detect-ProjectRoot {
   if ($script:ProjectRoot) { return }
@@ -24,5 +26,13 @@ function Detect-ProjectRoot {
 
 function New-Uuid {
   [guid]::NewGuid().ToString()
+}
+
+function Get-CliName {
+  return $script:CliName
+}
+
+function Get-CliPath {
+  return $script:CliPath
 }
 
