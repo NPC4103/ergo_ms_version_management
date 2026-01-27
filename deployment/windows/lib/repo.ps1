@@ -1,4 +1,4 @@
-﻿# Логика работы с репозиториями: создание структуры, сохранение метаданных, импорт, работа с API
+# Логика работы с репозиториями: создание структуры, сохранение метаданных, импорт, работа с API
 
 # ============================================================================
 # Функции для работы с API
@@ -348,6 +348,21 @@ function Get-ApiCommitDiff {
   
   Write-Host "[TODO] Вызвать API /api/repositories/$Uuid/commits/$CommitHash/diff/" -ForegroundColor Yellow
   Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/$Uuid/commits/$CommitHash/diff/"
+}
+
+# Получить статистику репозитория через API
+function Invoke-ApiGetStats {
+  param([string]$RepoUuid)
+  Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/$RepoUuid/stats/"
+}
+
+# Получить прогноз роста репозитория через API
+function Invoke-ApiGetForecast {
+  param(
+    [string]$RepoUuid,
+    [int]$Days = 30
+  )
+  Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/$RepoUuid/forecast/?days=$Days"
 }
 
 # ============================================================================

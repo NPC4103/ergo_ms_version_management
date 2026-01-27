@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 <#
 .SYNOPSIS
     Утилита для управления репозиториями version_management
@@ -55,6 +55,8 @@ switch ($Command.ToLower()) {
   "download" { Invoke-Download -Args $Args }
   "branch"   { Invoke-Branch -Args $Args }
   "files"    { Invoke-Files -Args $Args }
+  "stats"    { Invoke-Stats -Args $Args }
+  "forecast" { Invoke-Forecast -Args $Args }
   "install-cli" { Install-CliWrapper }
   "uninstall-cli" { Uninstall-CliWrapper }
   "help"     { Show-Help }

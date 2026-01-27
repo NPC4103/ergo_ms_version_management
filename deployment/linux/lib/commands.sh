@@ -1340,3 +1340,191 @@ root_items = data.get("structure") or data.get("items") or []
 render(root_items)
 PY
 }
+
+# ============================================================================
+# Статистика репозитория
+# Команда: ergovcs stats --repo <UUID> [--json]
+# ============================================================================
+cmd_stats() {
+  local repo_uuid=""
+  local output_format="table"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo|-r) shift; repo_uuid="${1:-}" ;;
+      --json|-j) output_format="json" ;;
+      *) echo "[WARN] Неизвестный параметр: $1" >&2 ;;
+    esac
+    shift || true
+  done
+
+  # Если UUID не указан, пробуем получить из текущего репозитория
+  if [[ -z "$repo_uuid" ]]; then
+    local repo_root
+    repo_root="$(find_repository_root 2>/dev/null)"
+    if [[ -n "$repo_root" ]]; then
+      repo_uuid="$(get_current_repo_uuid "$repo_root" 2>/dev/null)"
+    fi
+  fi
+
+  if [[ -z "$repo_uuid" ]]; then
+    echo "[ERROR] Нужно указать --repo <UUID> или выполнить команду в директории репозитория" >&2
+    exit 1
+  fi
+
+  echo "[INFO] Получение статистики репозитория $repo_uuid..." >&2
+
+  local response
+  response="$(api_get_stats "$repo_uuid")" || exit 1
+
+  if [[ "$output_format" == "json" ]]; then
+    echo "$response"
+    return 0
+  fi
+
+  echo "$response" | python3 - <<'PY'
+import json, sys
+
+data = json.load(sys.stdin)
+
+print()
+print("========== СТАТИСТИКА РЕПОЗИТОРИЯ ==========")
+print(f"Репозиторий: {data.get('repository_name', 'N/A')}")
+print(f"UUID: {data.get('repository_uuid', 'N/A')}")
+print()
+
+print("--- Общая статистика ---")
+print(f"  Общий размер: {data.get('total_size_human', 'N/A')}")
+print(f"  Всего файлов: {data.get('total_files', 0)}")
+print(f"  Всего коммитов: {data.get('total_commits', 0)}")
+print(f"  Количество веток: {data.get('branches_count', 0)}")
+print()
+
+# Статистика по типам файлов
+files_by_ext = data.get('files_by_extension', {})
+if files_by_ext:
+    print("--- Файлы по расширениям ---")
+    size_by_ext_human = data.get('size_by_extension_human', {})
+    sorted_exts = sorted(files_by_ext.items(), key=lambda x: x[1], reverse=True)[:10]
+    for ext, count in sorted_exts:
+        size = size_by_ext_human.get(ext, 'N/A')
+        print(f"  {ext:<15} {count:>6} файлов ({size})")
+    print()
+
+# Топ-5 тяжёлых файлов
+largest = data.get('largest_files', [])[:5]
+if largest:
+    print("--- Топ-5 тяжёлых файлов ---")
+    for f in largest:
+        print(f"  {f.get('path', 'N/A'):<40} {f.get('size_human', 'N/A')}")
+    print()
+
+# Кандидаты для холодного хранилища
+candidates = data.get('cold_storage_candidates', [])
+if candidates:
+    print("--- Кандидаты для холодного хранилища ---")
+    print(f"  Найдено кандидатов: {len(candidates)}")
+    for c in candidates[:5]:
+        reasons = ", ".join(c.get('reasons', []))
+        print(f"  [{c.get('priority', 0):>2}] {c.get('path', 'N/A'):<35} {c.get('size_human', 'N/A')} ({reasons})")
+    print()
+
+print(f"Время анализа: {data.get('analysis_duration_ms', 0)} мс")
+print("=============================================")
+PY
+}
+
+# ============================================================================
+# Прогноз роста репозитория
+# Команда: ergovcs forecast --repo <UUID> [--days 30] [--json]
+# ============================================================================
+cmd_forecast() {
+  local repo_uuid=""
+  local days="30"
+  local output_format="table"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo|-r) shift; repo_uuid="${1:-}" ;;
+      --days|-d) shift; days="${1:-30}" ;;
+      --json|-j) output_format="json" ;;
+      *) echo "[WARN] Неизвестный параметр: $1" >&2 ;;
+    esac
+    shift || true
+  done
+
+  # Если UUID не указан, пробуем получить из текущего репозитория
+  if [[ -z "$repo_uuid" ]]; then
+    local repo_root
+    repo_root="$(find_repository_root 2>/dev/null)"
+    if [[ -n "$repo_root" ]]; then
+      repo_uuid="$(get_current_repo_uuid "$repo_root" 2>/dev/null)"
+    fi
+  fi
+
+  if [[ -z "$repo_uuid" ]]; then
+    echo "[ERROR] Нужно указать --repo <UUID> или выполнить команду в директории репозитория" >&2
+    exit 1
+  fi
+
+  echo "[INFO] Получение прогноза для репозитория $repo_uuid (период: $days дней)..." >&2
+
+  local response
+  response="$(api_get_forecast "$repo_uuid" "$days")" || exit 1
+
+  if [[ "$output_format" == "json" ]]; then
+    echo "$response"
+    return 0
+  fi
+
+  echo "$response" | python3 - <<'PY'
+import json, sys
+
+data = json.load(sys.stdin)
+
+print()
+print("========== ПРОГНОЗ РОСТА РЕПОЗИТОРИЯ ==========")
+print(f"Репозиторий: {data.get('repository_name', 'N/A')}")
+print(f"UUID: {data.get('repository_uuid', 'N/A')}")
+print()
+
+print("--- Текущее состояние ---")
+print(f"  Текущий размер: {data.get('current_size_human', 'N/A')}")
+print(f"  Период анализа: {data.get('analysis_period_days', 0)} дней")
+print()
+
+forecast = data.get('forecast', {})
+if forecast:
+    print(f"--- Прогноз на {forecast.get('forecast_days', 30)} дней ---")
+    confidence = forecast.get('confidence', 'N/A')
+    confidence_color = ""
+    print(f"  Уверенность: {confidence}")
+    print(f"  Скользящее среднее (7 дней): {forecast.get('moving_average_7d_human', 'N/A')}/день")
+    print(f"  Скользящее среднее (30 дней): {forecast.get('moving_average_30d_human', 'N/A')}/день")
+    print(f"  Тренд: {forecast.get('daily_trend_human', 'N/A')}/день")
+    print()
+    
+    predictions = forecast.get('predictions', [])
+    if predictions:
+        print("--- Прогнозируемый размер ---")
+        step = max(1, len(predictions) // 5)
+        for i in range(0, len(predictions), step):
+            p = predictions[i]
+            print(f"  День {p.get('day', 0):>3}: {p.get('predicted_size_human', 'N/A')} (+ {p.get('predicted_daily_growth_human', 'N/A')})")
+        
+        last = predictions[-1]
+        print()
+        print(f"  Итого через {last.get('day', 0)} дней: {last.get('predicted_size_human', 'N/A')}")
+    print()
+
+# Последние 7 дней
+time_series = data.get('time_series', [])[-7:]
+if time_series:
+    print("--- Последние 7 дней ---")
+    for day in time_series:
+        net_growth = day.get('net_growth_human', 'N/A')
+        print(f"  {day.get('date', 'N/A')}: {day.get('commits_count', 0)} коммитов, рост: {net_growth}")
+
+print("================================================")
+PY
+}

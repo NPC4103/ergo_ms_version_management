@@ -1337,3 +1337,221 @@ function Render-Tree($items, $prefix) {
 Render-Tree $items ""
 }
 
+# ============================================================================
+# Статистика репозитория
+# Команда: ergovcs stats --repo <UUID>
+# ============================================================================
+function Invoke-Stats {
+  param([string[]]$Args)
+  
+  $repoUuid = $null
+  $outputFormat = "table"  # table, json
+  
+  for ($i = 0; $i -lt $Args.Count; $i++) {
+    switch ($Args[$i]) {
+      "--repo" { $i++; if ($i -lt $Args.Count) { $repoUuid = $Args[$i] } }
+      "-r" { $i++; if ($i -lt $Args.Count) { $repoUuid = $Args[$i] } }
+      "--json" { $outputFormat = "json" }
+      "-j" { $outputFormat = "json" }
+    }
+  }
+  
+  # Если UUID не указан, пробуем получить из текущего репозитория
+  if (-not $repoUuid) {
+    $repoRoot = Find-LocalRepositoryRoot
+    if ($repoRoot) {
+      $repoUuid = Get-CurrentRepositoryUuid -LocalPath $repoRoot
+    }
+  }
+  
+  if (-not $repoUuid) {
+    Write-Host "[ERROR] Нужно указать --repo <UUID> или выполнить команду в директории репозитория" -ForegroundColor Red
+    exit 1
+  }
+  
+  Write-Host "[INFO] Получение статистики репозитория $repoUuid..." -ForegroundColor Cyan
+  
+  $response = Invoke-ApiGetStats -RepoUuid $repoUuid
+  if (-not $response) {
+    Write-Host "[ERROR] Не удалось получить статистику" -ForegroundColor Red
+    exit 1
+  }
+  
+  if ($outputFormat -eq "json") {
+    Write-Host $response
+    return
+  }
+  
+  try {
+    $data = $response | ConvertFrom-Json
+    
+    Write-Host "`n========== СТАТИСТИКА РЕПОЗИТОРИЯ ==========" -ForegroundColor Green
+    Write-Host "Репозиторий: $($data.repository_name)" -ForegroundColor Cyan
+    Write-Host "UUID: $($data.repository_uuid)" -ForegroundColor Gray
+    Write-Host ""
+    
+    # Общая статистика
+    Write-Host "--- Общая статистика ---" -ForegroundColor Yellow
+    Write-Host "  Общий размер: $($data.total_size_human)"
+    Write-Host "  Всего файлов: $($data.total_files)"
+    Write-Host "  Всего коммитов: $($data.total_commits)"
+    Write-Host "  Количество веток: $($data.branches_count)"
+    Write-Host ""
+    
+    # Статистика по типам файлов
+    if ($data.files_by_extension) {
+      Write-Host "--- Файлы по расширениям ---" -ForegroundColor Yellow
+      $extensions = $data.files_by_extension.PSObject.Properties | Sort-Object { $_.Value } -Descending
+      foreach ($ext in $extensions | Select-Object -First 10) {
+        $size = if ($data.size_by_extension."$($ext.Name)") {
+          $data.size_by_extension_human."$($ext.Name)"
+        } else { "N/A" }
+        Write-Host ("  {0,-15} {1,6} файлов ({2})" -f $ext.Name, $ext.Value, $size)
+      }
+      Write-Host ""
+    }
+    
+    # Топ-5 тяжёлых файлов
+    if ($data.largest_files -and $data.largest_files.Count -gt 0) {
+      Write-Host "--- Топ-5 тяжёлых файлов ---" -ForegroundColor Yellow
+      foreach ($file in $data.largest_files | Select-Object -First 5) {
+        Write-Host ("  {0,-40} {1}" -f $file.path, $file.size_human)
+      }
+      Write-Host ""
+    }
+    
+    # Кандидаты для холодного хранилища
+    if ($data.cold_storage_candidates -and $data.cold_storage_candidates.Count -gt 0) {
+      Write-Host "--- Кандидаты для холодного хранилища ---" -ForegroundColor Yellow
+      Write-Host "  Найдено кандидатов: $($data.cold_storage_candidates.Count)" -ForegroundColor Cyan
+      foreach ($candidate in $data.cold_storage_candidates | Select-Object -First 5) {
+        $reasons = $candidate.reasons -join ", "
+        Write-Host ("  [{0,2}] {1,-35} {2} ({3})" -f $candidate.priority, $candidate.path, $candidate.size_human, $reasons)
+      }
+      Write-Host ""
+    }
+    
+    Write-Host "Время анализа: $($data.analysis_duration_ms) мс" -ForegroundColor Gray
+    Write-Host "=============================================" -ForegroundColor Green
+  }
+  catch {
+    Write-Host "[ERROR] Не удалось обработать ответ: $_" -ForegroundColor Red
+    Write-Host $response
+    exit 1
+  }
+}
+
+# ============================================================================
+# Прогноз роста репозитория
+# Команда: ergovcs forecast --repo <UUID> [--days 30]
+# ============================================================================
+function Invoke-Forecast {
+  param([string[]]$Args)
+  
+  $repoUuid = $null
+  $days = 30
+  $outputFormat = "table"  # table, json
+  
+  for ($i = 0; $i -lt $Args.Count; $i++) {
+    switch ($Args[$i]) {
+      "--repo" { $i++; if ($i -lt $Args.Count) { $repoUuid = $Args[$i] } }
+      "-r" { $i++; if ($i -lt $Args.Count) { $repoUuid = $Args[$i] } }
+      "--days" { $i++; if ($i -lt $Args.Count) { $days = [int]$Args[$i] } }
+      "-d" { $i++; if ($i -lt $Args.Count) { $days = [int]$Args[$i] } }
+      "--json" { $outputFormat = "json" }
+      "-j" { $outputFormat = "json" }
+    }
+  }
+  
+  # Если UUID не указан, пробуем получить из текущего репозитория
+  if (-not $repoUuid) {
+    $repoRoot = Find-LocalRepositoryRoot
+    if ($repoRoot) {
+      $repoUuid = Get-CurrentRepositoryUuid -LocalPath $repoRoot
+    }
+  }
+  
+  if (-not $repoUuid) {
+    Write-Host "[ERROR] Нужно указать --repo <UUID> или выполнить команду в директории репозитория" -ForegroundColor Red
+    exit 1
+  }
+  
+  Write-Host "[INFO] Получение прогноза для репозитория $repoUuid (период: $days дней)..." -ForegroundColor Cyan
+  
+  $response = Invoke-ApiGetForecast -RepoUuid $repoUuid -Days $days
+  if (-not $response) {
+    Write-Host "[ERROR] Не удалось получить прогноз" -ForegroundColor Red
+    exit 1
+  }
+  
+  if ($outputFormat -eq "json") {
+    Write-Host $response
+    return
+  }
+  
+  try {
+    $data = $response | ConvertFrom-Json
+    
+    Write-Host "`n========== ПРОГНОЗ РОСТА РЕПОЗИТОРИЯ ==========" -ForegroundColor Green
+    Write-Host "Репозиторий: $($data.repository_name)" -ForegroundColor Cyan
+    Write-Host "UUID: $($data.repository_uuid)" -ForegroundColor Gray
+    Write-Host ""
+    
+    # Текущее состояние
+    Write-Host "--- Текущее состояние ---" -ForegroundColor Yellow
+    Write-Host "  Текущий размер: $($data.current_size_human)"
+    Write-Host "  Период анализа: $($data.analysis_period_days) дней"
+    Write-Host ""
+    
+    # Прогноз
+    if ($data.forecast) {
+      Write-Host "--- Прогноз на $($data.forecast.forecast_days) дней ---" -ForegroundColor Yellow
+      Write-Host "  Уверенность: $($data.forecast.confidence)" -ForegroundColor $(
+        switch ($data.forecast.confidence) {
+          "very_high" { "Green" }
+          "high" { "Green" }
+          "medium" { "Yellow" }
+          default { "Red" }
+        }
+      )
+      Write-Host "  Скользящее среднее (7 дней): $($data.forecast.moving_average_7d_human)/день"
+      Write-Host "  Скользящее среднее (30 дней): $($data.forecast.moving_average_30d_human)/день"
+      Write-Host "  Тренд: $($data.forecast.daily_trend_human)/день"
+      Write-Host ""
+      
+      # Прогнозируемый рост
+      if ($data.forecast.predictions -and $data.forecast.predictions.Count -gt 0) {
+        Write-Host "--- Прогнозируемый размер ---" -ForegroundColor Yellow
+        $step = [Math]::Max(1, [Math]::Floor($data.forecast.predictions.Count / 5))
+        for ($i = 0; $i -lt $data.forecast.predictions.Count; $i += $step) {
+          $pred = $data.forecast.predictions[$i]
+          Write-Host ("  День {0,3}: {1} (+ {2})" -f $pred.day, $pred.predicted_size_human, $pred.predicted_daily_growth_human)
+        }
+        
+        # Последний день
+        $lastPred = $data.forecast.predictions[-1]
+        Write-Host ""
+        Write-Host "  Итого через $($lastPred.day) дней: $($lastPred.predicted_size_human)" -ForegroundColor Cyan
+      }
+      Write-Host ""
+    }
+    
+    # Временной ряд (последние 7 дней)
+    if ($data.time_series -and $data.time_series.Count -gt 0) {
+      Write-Host "--- Последние 7 дней ---" -ForegroundColor Yellow
+      $recentDays = $data.time_series | Select-Object -Last 7
+      foreach ($day in $recentDays) {
+        $netGrowth = if ($day.net_growth_human) { $day.net_growth_human } else { "N/A" }
+        Write-Host ("  {0}: {1} коммитов, рост: {2}" -f $day.date, $day.commits_count, $netGrowth)
+      }
+    }
+    
+    Write-Host "================================================" -ForegroundColor Green
+  }
+  catch {
+    Write-Host "[ERROR] Не удалось обработать ответ: $_" -ForegroundColor Red
+    Write-Host $response
+    exit 1
+  }
+}
+

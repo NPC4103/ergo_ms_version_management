@@ -51,6 +51,20 @@ ergovcs <command> [options]
   download --source <zip|dir> [--uuid <uuid>] [--name <имя>]
     Скачать/импортировать репозиторий из zip-архива или папки
 
+Аналитика и прогнозирование:
+  stats [--repo <uuid>] [--json]
+    Получить статистику репозитория (размер, типы файлов, кандидаты для холодного хранилища)
+    Примеры:
+      ergovcs stats --repo <uuid>
+      ergovcs stats --json
+
+  forecast [--repo <uuid>] [--days <число>] [--json]
+    Получить прогноз роста репозитория на основе временных рядов
+    Примеры:
+      ergovcs forecast --repo <uuid>
+      ergovcs forecast --days 90
+      ergovcs forecast --json
+
   install-cli
     Установить CLI-обертку /usr/local/bin/ergovcs
 
@@ -73,6 +87,8 @@ ergovcs <command> [options]
   ergovcs create --name "Мой репозиторий"
   ergovcs download --source /path/to/repo.zip
   ergovcs files --repo <uuid>
+  ergovcs stats --repo <uuid>
+  ergovcs forecast --repo <uuid> --days 30
   sudo ./version_manager.sh install-cli
   sudo ./version_manager.sh uninstall-cli
 EOF

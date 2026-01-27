@@ -34,6 +34,8 @@ main() {
     download)  cmd_download "$@" ;;
     branch)    cmd_branch "$@" ;;
     files)     cmd_files "$@" ;;
+    stats)     cmd_stats "$@" ;;
+    forecast)  cmd_forecast "$@" ;;
     install-cli) create_cli_wrapper "$SCRIPT_DIR/version_manager.sh" ;;
     uninstall-cli) remove_cli_wrapper ;;
     help|-h|--help) print_help ;;

@@ -339,6 +339,19 @@ api_get_commit_diff() {
   api_request "GET" "/repositories/$uuid/commits/$commit_hash/diff/"
 }
 
+# Получить статистику репозитория через API
+api_get_stats() {
+  local repo_uuid="$1"
+  api_request "GET" "/repositories/$repo_uuid/stats/"
+}
+
+# Получить прогноз роста репозитория через API
+api_get_forecast() {
+  local repo_uuid="$1"
+  local days="${2:-30}"
+  api_request "GET" "/repositories/$repo_uuid/forecast/?days=$days"
+}
+
 # ============================================================================
 # Локальные функции работы с репозиториями
 # ============================================================================
