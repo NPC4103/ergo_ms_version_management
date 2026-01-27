@@ -17,6 +17,7 @@ import hashlib
 import uuid as uuid_lib
 
 from .smart_merge import smart_merge
+from .file_analyzer import analyze_repository
 
 from .models import Repository, Branch, Collaborator
 from .serializers import (
@@ -1530,6 +1531,86 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                 'success': False,
                 'error': f'Непредвиденная ошибка: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['get'], url_path='stats')
+    def stats(self, request, public_id=None):
+        """
+        Получить детализированную статистику репозитория.
+        GET /api/version_management/repositories/{public_id}/stats/
+        
+        Анализирует файловую структуру репозитория и возвращает:
+        - Общий размер и количество файлов
+        - Статистику по типам файлов
+        - Топ тяжёлых файлов
+        - Кандидатов для миграции в холодное хранилище
+        - Статистику по веткам
+        
+        Returns:
+        {
+            "success": true,
+            "stats": {
+                "repo_uuid": "...",
+                "repo_name": "...",
+                "total_size": 12345678,
+                "total_size_human": "11.77 MB",
+                "total_files": 150,
+                "total_commits": 25,
+                "branches_count": 3,
+                "files_by_extension": {"py": 50, "js": 30, ...},
+                "size_by_extension": {"py": 500000, "js": 300000, ...},
+                "largest_files": [...],
+                "cold_storage_candidates": [...],
+                "branches_stats": {...},
+                "analyzed_at": "2026-01-27T...",
+                "analysis_duration_ms": 150
+            }
+        }
+        """
+        repository = self.get_object()
+        
+        # Проверяем права на просмотр
+        #if not repository.can_user_view(request.user.id):
+        #    raise PermissionDenied("У вас нет доступа к этому репозиторию")
+        
+        try:
+            # Выполняем анализ
+            stats = analyze_repository(
+                media_root=str(MEDIA_ROOT),
+                repo_uuid=str(repository.public_id),
+                repo_name=repository.name
+            )
+            
+            # Добавляем человекочитаемый размер
+            stats['total_size_human'] = self._format_size(stats.get('total_size', 0))
+            
+            # Добавляем человекочитаемые размеры для веток
+            for branch_name, branch_stats in stats.get('branches_stats', {}).items():
+                branch_stats['total_size_human'] = self._format_size(branch_stats.get('total_size', 0))
+            
+            return Response({
+                'success': True,
+                'stats': stats,
+                'repository': {
+                    'public_id': str(repository.public_id),
+                    'name': repository.name,
+                }
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': f'Ошибка анализа репозитория: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @staticmethod
+    def _format_size(size_bytes) -> str:
+        """Форматирует размер в человекочитаемый формат."""
+        size = float(size_bytes)
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size < 1024:
+                return f"{size:.2f} {unit}"
+            size /= 1024
+        return f"{size:.2f} PB"
 
 
 class BranchViewSet(viewsets.ModelViewSet):

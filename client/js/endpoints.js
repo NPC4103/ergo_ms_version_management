@@ -38,6 +38,10 @@ export const versionManagementEndpoints = {
             `${API_PREFIX}/repositories/${publicId}/branches/${branchName}/file/update/`,
         uploadFile: (publicId, branchName) =>
             `${API_PREFIX}/repositories/${publicId}/branches/${branchName}/files/upload/`,
+        
+        // statistics
+        stats: (publicId) =>
+            `${API_PREFIX}/repositories/${publicId}/stats/`,
     },
 
     branches: {
