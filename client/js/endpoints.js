@@ -28,6 +28,10 @@ export const versionManagementEndpoints = {
             `${API_PREFIX}/repositories/${publicId}/commits/${commitHash}/`,
         commitDiff: (publicId, commitHash) =>
             `${API_PREFIX}/repositories/${publicId}/commits/${commitHash}/diff/`,
+
+        // branch files
+        branchFiles: (publicId, branchName) =>
+            `${API_PREFIX}/repositories/${publicId}/branches/${branchName}/files/`,
     },
 
     branches: {

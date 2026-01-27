@@ -603,6 +603,74 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                 'count': 0
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @action(detail=True, methods=['get'], url_path=r'branches/(?P<branch_name>[^/]+)/files')
+    def get_branch_files(self, request, public_id=None, branch_name=None):
+        """
+        Получить список файлов в ветке (из последнего коммита).
+        GET /api/repositories/{id}/branches/{branch_name}/files/
+        """
+        repository = self.get_object()
+        repo_uuid = str(repository.public_id)
+        
+        try:
+            base_path = os.path.join(MEDIA_ROOT, 'version_management', repo_uuid)
+            branch_path = os.path.join(base_path, 'branches', branch_name)
+            
+            if not os.path.exists(branch_path):
+                 return Response({
+                    'error': f'Ветка {branch_name} не найдена',
+                    'files': []
+                 }, status=status.HTTP_404_NOT_FOUND)
+
+            # Стратегия:
+            # 1. Ищем файлы в корне ветки (branch_path) - тут лежит README.md и commit.json
+            # 2. Ищем папку commits/ и последний коммит там
+            
+            target_dirs = [branch_path]
+            
+            commits_path = os.path.join(branch_path, 'commits')
+            if os.path.exists(commits_path) and os.path.isdir(commits_path):
+                # Находим последний измененный коммит
+                commits = []
+                for commit_dir in os.listdir(commits_path):
+                    full_path = os.path.join(commits_path, commit_dir)
+                    if os.path.isdir(full_path):
+                        commits.append((os.path.getmtime(full_path), full_path))
+                
+                if commits:
+                    # Сортируем по времени (последний первым)
+                    commits.sort(key=lambda x: x[0], reverse=True)
+                    target_dirs.append(commits[0][1])
+
+            files_map = {}
+            for d in target_dirs:
+                if not os.path.exists(d): continue
+                
+                for item in os.listdir(d):
+                    if item in ['commit.json', 'pending_commit.json', 'commits', '.repo_info.json', '.git']:
+                        continue
+                        
+                    item_path = os.path.join(d, item)
+                    is_dir = os.path.isdir(item_path)
+                    
+                    # Добавляем или перезаписываем (приоритет у последнего, т.е. коммита)
+                    files_map[item] = {
+                        'name': item,
+                        'path': item,
+                        'type': 'dir' if is_dir else 'file',
+                        'size': os.path.getsize(item_path) if not is_dir else 0,
+                        'last_date': datetime.fromtimestamp(os.path.getmtime(item_path)).strftime('%Y-%m-%d %H:%M')
+                    }
+
+            files_list = list(files_map.values())
+            files_list.sort(key=lambda x: x['name'])
+
+            return Response(files_list, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            print(f"Error getting branch files: {e}")
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @action(detail=True, methods=['get'], url_path=r'commits/(?P<commit_hash>[^/.]+)')
     def commit_retrieve(self, request, public_id=None, commit_hash=None):
         """

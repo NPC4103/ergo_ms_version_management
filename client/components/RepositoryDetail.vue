@@ -26,6 +26,10 @@
             </li>
           </ul>
         </div>
+        <!-- Create Branch Button -->
+        <button class="btn btn-outline-success btn-sm d-flex align-items-center gap-1" @click="openCreateBranchModal" title="Создать ветку">
+          <Plus :size="14" /> Ветка
+        </button>
         <span class="branch-stats">{{ branches.length }} Branch · 0 Tags</span>
       </div>
 
@@ -219,6 +223,34 @@
         </div>
     </div>
 
+    <!-- Create Branch Modal -->
+    <div class="modal-overlay" v-if="showCreateBranchModal" @click.self="closeCreateBranchModal">
+        <div class="modal-container">
+            <div class="modal-header">
+                <h4>Создание ветки</h4>
+                <button class="modal-close" @click="closeCreateBranchModal"><X :size="24" /></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label text-muted small">Имя ветки</label>
+                    <input type="text" class="form-control bg-dark text-white border-secondary" 
+                           v-model="newBranchName" 
+                           placeholder="feature-new-feature"
+                           @keyup.enter="createBranch">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label text-muted small">Базовая ветка</label>
+                    <select class="form-select bg-dark text-white border-secondary" v-model="baseBranch">
+                        <option v-for="branch in branches" :key="branch.name" :value="branch.name">{{ branch.name }}</option>
+                    </select>
+                </div>
+                <button class="btn btn-success w-100" @click="createBranch" :disabled="!newBranchName.trim()">
+                    <Plus :size="16" class="me-2" /> Создать ветку
+                </button>
+            </div>
+        </div>
+    </div>
+
   </div>
   <div v-else-if="loading" class="p-4 text-center">Загрузка...</div>
   <div v-else class="p-4 text-center text-danger">Репозиторий не найден</div>
@@ -233,7 +265,7 @@ import { useToast } from 'vue-toastification';
 import CommitList from './CommitList.vue';
 import { 
     ArrowLeft, GitBranch, Folder, FileText, History, Link, Settings, 
-    FilePlus, Upload, ChevronDown, FolderOpen, X, Tag, Download, BarChart3
+    FilePlus, Upload, ChevronDown, FolderOpen, X, Tag, Download, BarChart3, Plus
 } from 'lucide-vue-next';
 
 const route = useRoute();
@@ -255,6 +287,11 @@ const releasesMenu = ref(null);
 // Modals
 const showCommitsModal = ref(false);
 const showCreateReleaseModal = ref(false);
+const showCreateBranchModal = ref(false);
+
+// Branch creation
+const newBranchName = ref('');
+const baseBranch = ref('main');
 
 const branches = ref([{ name: 'main' }]);
 const currentBranch = ref('main');
@@ -275,12 +312,37 @@ const openSubmenu = (n) => { activeSubmenu.value = n; };
 const closeSubmenu = () => { activeSubmenu.value = null; };
 const closeMenu = () => { showActionsMenu.value = false; showReleases.value = false; activeSubmenu.value = null; };
 const toggleScroll = () => { isExpanded.value = !isExpanded.value; };
-const selectBranch = (n) => { currentBranch.value = n; };
+const selectBranch = async (n) => { currentBranch.value = n; await loadBranchFiles(); };
 const copyCloneUrl = () => { navigator.clipboard.writeText(`${window.location.origin}/versionmanagement/repo/${repo.value?.public_id}`); toast.success('Ссылка скопирована!'); closeMenu(); };
 const createNewFile = () => { toast.info('Создание файла...'); closeMenu(); };
 const uploadFile = () => { toast.info('Загрузка файлов...'); closeMenu(); };
 const goToSettings = () => { closeMenu(); router.push({ name: 'RepositorySettings', params: { id: repoId } }); };
 const goToCommitGraph = () => { closeMenu(); router.push({ name: 'CommitGraph', params: { id: repoId } }); };
+
+// Branch creation
+const openCreateBranchModal = () => { showCreateBranchModal.value = true; baseBranch.value = currentBranch.value; };
+const closeCreateBranchModal = () => { showCreateBranchModal.value = false; newBranchName.value = ''; };
+const createBranch = async () => {
+    if (!newBranchName.value.trim()) return;
+    try {
+        const response = await apiClient.post(versionManagementEndpoints.branches.create, {
+            name: newBranchName.value.trim(),
+            repository: repo.value.id,
+            source_branch: baseBranch.value
+        });
+        if (response.success) {
+            branches.value.push({ name: newBranchName.value.trim() });
+            currentBranch.value = newBranchName.value.trim();
+            toast.success(`Ветка "${newBranchName.value}" создана`);
+            closeCreateBranchModal();
+        } else {
+            toast.error(response.message || 'Ошибка создания ветки');
+        }
+    } catch (e) {
+        console.error(e);
+        toast.error('Ошибка сети');
+    }
+};
 
 // Releases
 const openCreateReleaseModal = () => { showCreateReleaseModal.value = true; closeMenu(); };
@@ -306,10 +368,43 @@ const loadRepo = async () => {
   loading.value = true;
   try {
     const response = await apiClient.get(versionManagementEndpoints.repositories.retrieve(repoId));
-    if (response.success) repo.value = response.data;
+    if (response.success) {
+      repo.value = response.data;
+      // Load branches
+      await loadBranches();
+      // Load files for current branch
+      await loadBranchFiles();
+    }
     else toast.error(response.message || 'Ошибка загрузки');
   } catch (e) { toast.error('Ошибка сети'); console.error(e); }
   finally { loading.value = false; }
+};
+
+const loadBranches = async () => {
+  try {
+    const response = await apiClient.get(versionManagementEndpoints.repositories.branches(repoId));
+    if (response.success && response.data) {
+      branches.value = response.data.map(b => ({ name: b.name || b }));
+      if (branches.value.length > 0 && !branches.value.find(b => b.name === currentBranch.value)) {
+        currentBranch.value = branches.value[0].name;
+      }
+    }
+  } catch (e) { console.error('Error loading branches:', e); }
+};
+
+const loadBranchFiles = async () => {
+  try {
+    const response = await apiClient.get(
+      versionManagementEndpoints.repositories.branchFiles(repoId, currentBranch.value)
+    );
+    if (response.success && response.data) {
+      // Filter out commit.json files
+      files.value = response.data.filter(f => f.name !== 'commit.json');
+    }
+  } catch (e) { 
+    console.error('Error loading branch files:', e); 
+    files.value = [];
+  }
 };
 </script>
 
