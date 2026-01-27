@@ -277,6 +277,29 @@ function Test-Ignored {
       $normalizedPattern = $normalizedPattern.TrimEnd('/')
     }
     
+    # Специальная обработка паттерна ".*" (файлы/директории, начинающиеся с точки)
+    if ($normalizedPattern -eq '.*') {
+      # Паттерн ".*" означает: имя файла/директории начинается с точки
+      # Проверяем, начинается ли имя файла/директории с точки
+      $fileName = Split-Path -Leaf $normalizedPath
+      if ($fileName.StartsWith('.')) {
+        return $true
+      }
+      continue
+    }
+    
+    # Специальная обработка паттерна "*/.*" (файлы/директории, начинающиеся с точки в любой поддиректории)
+    if ($normalizedPattern -eq '*/.*') {
+      # Проверяем, есть ли в пути любой сегмент, начинающийся с точки
+      $pathSegments = $normalizedPath -split '/'
+      foreach ($segment in $pathSegments) {
+        if ($segment.StartsWith('.')) {
+          return $true
+        }
+      }
+      continue
+    }
+    
     # Преобразуем glob-паттерны в regex
     $regexPattern = [regex]::Escape($normalizedPattern)
     $regexPattern = $regexPattern.Replace('\*', '.*').Replace('\?', '.')

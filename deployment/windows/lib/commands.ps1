@@ -1,4 +1,4 @@
-﻿# Обработчики команд: clone, add, commit, push, update, remove, create, download
+# Обработчики команд: clone, add, commit, push, update, remove, create, download
 
 # ============================================================================
 # Клонирование репозитория
@@ -158,12 +158,15 @@ function Invoke-Add {
   $ignorePatternsArray = @()
   $ergovcsIgnorePath = Join-Path $repoRoot ".ergovcsignore"
   if (Test-Path $ergovcsIgnorePath) {
-    $ignorePatterns = Get-Content $ergovcsIgnorePath | Where-Object { 
+    $patternsFromFile = Get-Content $ergovcsIgnorePath | Where-Object { 
       -not [string]::IsNullOrWhiteSpace($_) -and -not $_.StartsWith("#")
     } | ForEach-Object { $_.Trim() }
+    if ($patternsFromFile) {
+      $ignorePatternsArray += $patternsFromFile
+    }
   }
   
-  # Добавляем стандартные паттерны игнорирования
+  # Добавляем стандартные паттерны игнорирования (файлы/директории, начинающиеся с точки)
   $ignorePatternsArray += ".*"
   $ignorePatternsArray += "*/.*"
   
@@ -172,7 +175,10 @@ function Invoke-Add {
     Write-Host "[INFO] Сканирую все файлы и директории (исключая игнорируемые)..." -ForegroundColor Cyan
     
     # Используем улучшенную функцию с фильтрацией
-    $allItems = Get-ChildItem -Path $repoRoot -Recurse -Force | ForEach-Object {
+    # Исключаем .ergovcs директорию из сканирования
+    $allItems = Get-ChildItem -Path $repoRoot -Recurse -Force | Where-Object {
+      $_.FullName -notlike "*\.ergovcs*"
+    } | ForEach-Object {
       $relativePath = [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName).Replace('\', '/')
       if (-not (Test-Ignored -FilePath $relativePath -IgnorePatterns $ignorePatternsArray)) {
         $relativePath
@@ -242,7 +248,7 @@ function Invoke-Add {
     }
     
     # Проверяем игнорирование
-    if (Test-Ignored -FilePath $relativePath -IgnorePatterns $ignorePatterns) {
+    if (Test-Ignored -FilePath $relativePath -IgnorePatterns $ignorePatternsArray) {
       $ignoredItems += $relativePath
       Write-Host "[IGNORE] Игнорировано: $relativePath" -ForegroundColor DarkGray
       continue
@@ -493,7 +499,7 @@ function Invoke-Commit {
   # 8. Запросить сообщение, если оно не указано
   if ([string]::IsNullOrWhiteSpace($message) -and -not $updateChanges) {
       Write-Host "[INFO] Введите сообщение коммита:" -ForegroundColor Cyan
-      
+
       $message = Read-Host "Сообщение"
       
       if ([string]::IsNullOrWhiteSpace($message)) {
