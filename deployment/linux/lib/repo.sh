@@ -385,88 +385,165 @@ import_from_source() {
 }
 
 # ============================================================================
-# Функции для работы со staging area
+# Функции для работы с содержимым проекта и коммитами
 # ============================================================================
 
-# Найти корень репозитория (ищет .ergovcs/staging.json или .ergovcs/config.json вверх по дереву)
-find_repository_root() {
-  local start="$(pwd)"
-  while [[ "$start" != "/" ]]; do
-    local ergovcs_dir="$start/.ergovcs"
-    local staging_file="$ergovcs_dir/staging.json"
-    local config_file="$ergovcs_dir/config.json"
-    
-    if [[ -f "$staging_file" ]] || [[ -f "$config_file" ]]; then
-      echo "$start"
-      return 0
-    fi
-    start="$(dirname "$start")"
-  done
-  return 1
-}
-
-# Получить UUID текущего репозитория
-get_current_repository_uuid() {
-  local repo_root
-  repo_root="$(find_repository_root)"
-  if [[ -z "$repo_root" ]]; then
-    return 1
-  fi
+# Получить содержимое проекта (из API или backup.json)
+get_project_content() {
+  local repo_uuid="$1"
+  local local_path="$2"
   
-  local staging_file="$repo_root/.ergovcs/staging.json"
-  if [[ -f "$staging_file" ]]; then
-    # Используем python или jq для парсинга JSON, если доступен
-    if command -v python3 >/dev/null 2>&1; then
-      local uuid
-      uuid="$(python3 -c "import json, sys; data = json.load(open('$staging_file')); print(data.get('repository_uuid', ''))" 2>/dev/null)"
-      if [[ -n "$uuid" ]]; then
-        echo "$uuid"
-        return 0
-      fi
-    elif command -v jq >/dev/null 2>&1; then
-      local uuid
-      uuid="$(jq -r '.repository_uuid // empty' "$staging_file" 2>/dev/null)"
-      if [[ -n "$uuid" ]] && [[ "$uuid" != "null" ]]; then
-        echo "$uuid"
-        return 0
-      fi
-    else
-      # Простой парсинг через grep (менее надежный)
-      local uuid
-      uuid="$(grep -o '"repository_uuid"[[:space:]]*:[[:space:]]*"[^"]*"' "$staging_file" 2>/dev/null | cut -d'"' -f4)"
-      if [[ -n "$uuid" ]]; then
-        echo "$uuid"
-        return 0
-      fi
-    fi
-  fi
-  
-  # Пробуем найти UUID из конфига репозиториев
-  local repos_file="$HOME/.ergovcs/repos.json"
-  if [[ -f "$repos_file" ]]; then
-    if command -v python3 >/dev/null 2>&1; then
-      local uuid
-      uuid="$(python3 -c "
+  # 1. Пробуем получить через API
+  local api_response
+  api_response="$(api_get_repo_files "$repo_uuid" 2>/dev/null)"
+  if [[ $? -eq 0 ]] && [[ -n "$api_response" ]]; then
+    echo "$api_response" | python3 -c "
 import json, sys
 try:
-    with open('$repos_file') as f:
-        repos = json.load(f)
-    for uuid, repo in repos.get('repositories', {}).items():
-        if repo.get('local_path') == '$repo_root':
-            print(uuid)
-            sys.exit(0)
+    data = json.load(sys.stdin)
+    result = {
+        'source': 'api',
+        'structure': data.get('structure', data.get('items', []))
+    }
+    print(json.dumps(result))
 except:
     pass
-" 2>/dev/null)"
-      if [[ -n "$uuid" ]]; then
-        echo "$uuid"
-        return 0
-      fi
+" 2>/dev/null && return 0
+  fi
+  
+  # 2. Пробуем получить из backup.json
+  local backup_file="$local_path/.ergovcs/backup.json"
+  if [[ -f "$backup_file" ]]; then
+    cat "$backup_file" | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    result = {
+        'source': 'backup',
+        'structure': data.get('structure', data.get('items', [])),
+        'timestamp': data.get('timestamp', '')
+    }
+    print(json.dumps(result))
+except:
+    pass
+" 2>/dev/null && return 0
+  fi
+  
+  # 3. Создаем пустую структуру
+  echo '{"source": "empty", "structure": []}'
+}
+
+# Получить автора коммита
+get_commit_author() {
+  # 1. Пробуем получить через API
+  local api_response
+  api_response="$(api_request "GET" "/user/current/" 2>/dev/null)"
+  if [[ $? -eq 0 ]] && [[ -n "$api_response" ]]; then
+    local username
+    username="$(echo "$api_response" | python3 -c "import json, sys; data = json.load(sys.stdin); print(data.get('username', ''))" 2>/dev/null)"
+    if [[ -n "$username" ]]; then
+      echo "$username"
+      return 0
     fi
   fi
   
-  return 1
+  # 2. Пробуем получить из переменных окружения
+  if [[ -n "${USER:-}" ]]; then
+    echo "$USER"
+    return 0
+  elif [[ -n "${USERNAME:-}" ]]; then
+    echo "$USERNAME"
+    return 0
+  fi
+  
+  # 3. Пробуем получить через команду whoami
+  if command -v whoami >/dev/null 2>&1; then
+    local username
+    username="$(whoami 2>/dev/null)"
+    if [[ -n "$username" ]]; then
+      echo "$username"
+      return 0
+    fi
+  fi
+  
+  # 4. Возвращаем Unknown
+  echo "Unknown"
 }
+
+# Определить тип коммита на основе изменений
+get_commit_type() {
+  local files_json="$1"
+  local message="${2:-}"
+  
+  # Проверяем, указан ли тип в сообщении
+  local commit_types=("feat" "fix" "docs" "style" "refactor" "test" "chore" "perf" "ci" "build" "revert")
+  
+  if [[ -n "$message" ]] && echo "$message" | grep -qE '^(\w+):'; then
+    local type
+    type="$(echo "$message" | sed -E 's/^(\w+):.*/\1/')"
+    for ct in "${commit_types[@]}"; do
+      if [[ "$type" == "$ct" ]]; then
+        echo "$type"
+        return 0
+      fi
+    done
+  fi
+  
+  # Автоматическое определение типа на основе изменений
+  echo "$files_json" | python3 -c "
+import json, sys, re
+
+files_json = sys.stdin.read()
+try:
+    files = json.loads(files_json)
+    if not isinstance(files, list):
+        files = []
+except:
+    files = []
+
+has_build_files = False
+has_source_files = False
+has_docs_files = False
+has_style_files = False
+
+for file in files:
+    path = file.get('path', '').lower()
+    action = file.get('action', '')
+    
+    # Проверяем файлы сборки
+    if re.search(r'(package\.json|pom\.xml|build\.gradle|build\.xml|cmakelists\.txt|makefile|dockerfile|\.yml\$|\.yaml\$|\.json\$|\.config\$|\.ini\$)', path):
+        has_build_files = True
+    
+    # Проверяем исходные файлы (новый функционал)
+    if re.search(r'(\.py\$|\.js\$|\.ts\$|\.java\$|\.cpp\$|\.cs\$|\.php\$|\.rb\$|\.go\$)', path):
+        if action == 'created':
+            has_source_files = True
+    
+    # Проверяем документацию
+    if re.search(r'(readme\.md|readme\.txt|\.md\$|\.rst\$|docs?/)', path):
+        has_docs_files = True
+    
+    # Проверяем стили
+    if re.search(r'(\.css\$|\.scss\$|\.less\$|\.sass\$|\.styl\$)', path):
+        has_style_files = True
+
+# Определяем тип по приоритету
+if has_build_files:
+    print('build')
+elif has_source_files:
+    print('feat')
+elif has_docs_files:
+    print('docs')
+elif has_style_files:
+    print('style')
+else:
+    print('chore')
+"
+}
+
+# ============================================================================
+# Функции для работы со staging area
+# ============================================================================
 
 # Получить путь к файлу staging area
 get_staging_file_path() {
@@ -505,38 +582,5 @@ save_staging_area() {
   fi
   
   echo "$staging_json" > "$staging_file"
-}
-
-# Определить действие файла (added, modified, deleted)
-get_file_action() {
-  local file_path="$1"
-  local repo_root="$2"
-  
-  local full_path
-  if [[ "$file_path" == /* ]]; then
-    full_path="$file_path"
-  else
-    full_path="$repo_root/$file_path"
-  fi
-  
-  if [[ ! -e "$full_path" ]]; then
-    echo "deleted"
-    return 0
-  fi
-  
-  # Проверяем, существует ли файл в репозитории на сервере
-  # Для простоты считаем, что если файл существует локально, то он modified или added
-  # Проверяем наличие файла в удаленном репозитории через API (если доступно)
-  # Пока что используем эвристику: если файл в подпапках api/ или client/, то это новый файл
-  # В будущем можно добавить проверку через API или локальный индекс
-  
-  local relative_path="${full_path#$repo_root/}"
-  if [[ "$relative_path" == api/* ]] || [[ "$relative_path" == client/* ]]; then
-    # Файлы в api/ или client/ считаем новыми (added)
-    echo "added"
-    return 0
-  fi
-  
-  echo "modified"
 }
 

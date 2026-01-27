@@ -148,13 +148,11 @@ with open(file_path, 'w') as f:
 # Добавляет файл для коммита
 # ============================================================================
 cmd_add() {
-  # create должен подготовить локальные метаданные в рабочей директории
-  
-  # 1. Найти корень репозитория
+  # 1. Определить корень репозитория
   local repo_root
   repo_root="$(find_repository_root)"
   if [[ -z "$repo_root" ]]; then
-    echo "[ERROR] Не удалось найти репозиторий. Убедитесь, что вы находитесь в директории репозитория." >&2
+    echo "[ERROR] Не удалось определить корень репозитория." >&2
     exit 1
   fi
   
@@ -163,107 +161,227 @@ cmd_add() {
   uuid="$(get_current_repository_uuid)"
   if [[ -z "$uuid" ]]; then
     echo "[ERROR] Не удалось определить UUID репозитория." >&2
-    echo "[INFO] Убедитесь, что репозиторий был клонирован или создан через команду clone/create." >&2
     exit 1
   fi
   
-  # 3. Прочитать текущий staging area один раз для всех файлов
+  # 3. Получить предыдущее состояние проекта
+  local previous_state_json
+  previous_state_json="$(get_project_content "$uuid" "$repo_root")"
+  
+  # 4. Загрузить правила игнорирования
+  local ignore_patterns_array=()
+  local ergovcs_ignore_path="$repo_root/.ergovcsignore"
+  if [[ -f "$ergovcs_ignore_path" ]]; then
+    while IFS= read -r line; do
+      line="${line%%#*}"  # Удаляем комментарии
+      line="${line// /}"  # Удаляем пробелы
+      if [[ -n "$line" ]]; then
+        ignore_patterns_array+=("$line")
+      fi
+    done < "$ergovcs_ignore_path"
+  fi
+  
+  # Добавляем стандартные паттерны игнорирования (файлы/директории, начинающиеся с точки)
+  ignore_patterns_array+=(".*")
+  ignore_patterns_array+=("*/.*")
+  
+  # Преобразуем массив в JSON для передачи в функции
+  local ignore_patterns_json
+  ignore_patterns_json="$(printf '%s\n' "${ignore_patterns_array[@]}" | python3 -c "import json, sys; print(json.dumps([line.strip() for line in sys.stdin if line.strip()]))")"
+  
+  # 5. Если аргументы не переданы, сканируем всю директорию
+  local files_to_add=()
+  if [[ $# -eq 0 ]]; then
+    echo "[INFO] Сканирую все файлы и директории (исключая игнорируемые)..." >&2
+    
+    # Используем улучшенную функцию с фильтрацией
+    local all_items_json
+    all_items_json="$(get_all_items "$repo_root" "$repo_root" "$ignore_patterns_json")"
+    
+    # Исключаем .ergovcs директорию из сканирования
+    local all_items
+    all_items="$(echo "$all_items_json" | python3 -c "
+import json, sys
+items = json.load(sys.stdin)
+filtered = [item for item in items if '.ergovcs' not in item]
+print(json.dumps(filtered))
+")"
+    
+    # Преобразуем JSON в массив путей
+    files_to_add=($(echo "$all_items" | python3 -c "import json, sys; items = json.load(sys.stdin); print(' '.join(items))"))
+    
+    if [[ ${#files_to_add[@]} -eq 0 ]]; then
+      echo "[INFO] Нет файлов для добавления (все файлы игнорируются или отсутствуют)." >&2
+      exit 0
+    fi
+    
+    echo "[INFO] Найдено элементов: ${#files_to_add[@]}" >&2
+  else
+    # Используем переданные аргументы
+    files_to_add=("$@")
+  fi
+  
+  # 6. Создать директорию .ergovcs
+  local ergovcs_path="$repo_root/.ergovcs"
+  mkdir -p "$ergovcs_path"
+  
+  # 7. Прочитать текущий staging area
+  local staging_file="$ergovcs_path/staging.json"
   local staging_json
   staging_json="$(get_staging_area)"
   
-  # 4. Обработать каждый файл из аргументов
-  local file_path
-  local has_errors=0
+  # Инициализируем структуру staging, если её нет
+  staging_json="$(echo "$staging_json" | python3 -c "
+import json, sys
+try:
+    staging = json.load(sys.stdin)
+except:
+    staging = {}
+if 'repository_uuid' not in staging:
+    staging['repository_uuid'] = '${uuid}'
+if 'files' not in staging:
+    staging['files'] = []
+print(json.dumps(staging))
+")"
   
-  while [[ $# -gt 0 ]]; do
-    file_path="$1"
-    shift || true
-    
-    # 5. Пропустить пустые аргументы
-    if [[ -z "$file_path" ]]; then
-      echo "[WARNING] Пропущен пустой аргумент" >&2
+  # 8. Обработать каждый файл/директорию
+  local added_items=()
+  local ignored_items=()
+  local errors=()
+  
+  for item in "${files_to_add[@]}"; do
+    if [[ -z "$item" ]]; then
       continue
     fi
     
-    # 6. Определить полный путь к файлу
+    # Определяем полный путь
     local full_path
-    if [[ "$file_path" == /* ]]; then
-      full_path="$file_path"
+    if [[ "$item" == /* ]]; then
+      full_path="$item"
     else
-      full_path="$(realpath "$file_path" 2>/dev/null || echo "$(pwd)/$file_path")"
+      full_path="$(realpath "$item" 2>/dev/null || echo "$(pwd)/$item")"
     fi
     
-    # 7. Проверить существование файла
-    if [[ ! -e "$full_path" ]]; then
-      echo "[ERROR] Файл не найден: $file_path" >&2
-      has_errors=1
-      continue
-    fi
-    
-    # 8. Получить относительный путь от корня репозитория
+    # Получаем относительный путь
     local relative_path
     relative_path="$(realpath --relative-to="$repo_root" "$full_path" 2>/dev/null || echo "${full_path#$repo_root/}")"
     relative_path="${relative_path//\\//}"
     
-    # 9. Прочитать содержимое файла (как текст, будет экранировано в JSON)
-    local file_content
-    file_content="$(cat "$full_path" 2>/dev/null)"
-    if [[ $? -ne 0 ]]; then
-      echo "[ERROR] Не удалось прочитать файл: $file_path" >&2
-      has_errors=1
+    # Проверяем игнорирование
+    if test_ignored "$relative_path" "$ignore_patterns_json"; then
+      ignored_items+=("$relative_path")
+      echo "[IGNORE] Игнорировано: $relative_path" >&2
       continue
     fi
     
-    # 10. Определить действие файла
-    local action
-    action="$(get_file_action "$relative_path" "$repo_root")"
-    
-    # 11. Обновить staging area через Python (надежнее, чем ручной парсинг)
-    if ! command -v python3 >/dev/null 2>&1; then
-      echo "[ERROR] python3 не установлен. Установите его для работы со staging area." >&2
-      exit 1
+    # Проверяем существование
+    local exists=false
+    local is_directory=false
+    if [[ -e "$full_path" ]]; then
+      exists=true
+      if [[ -d "$full_path" ]]; then
+        is_directory=true
+      fi
     fi
     
-    # Экранируем содержимое файла для безопасной передачи в Python
-    local file_content_escaped
-    file_content_escaped="$(echo "$file_content" | python3 -c "import sys, json; print(json.dumps(sys.stdin.read()))" 2>/dev/null)"
+    # Определяем тип изменения
+    local action
+    action="$(get_file_change_type "$full_path" "$repo_root" "$previous_state_json" "$is_directory")"
     
-    # Обновляем staging area для текущего файла
+    if [[ "$action" == "unchanged" ]]; then
+      continue
+    fi
+    
+    # Обновляем staging area через Python
     staging_json="$(echo "$staging_json" | python3 - <<PYTHON
-import json
-import sys
+import json, sys, os
+from datetime import datetime
 
 try:
     staging = json.load(sys.stdin)
+    relative_path = '${relative_path}'
+    action = '${action}'
+    is_directory = ${is_directory}
+    full_path = '${full_path}'
+    exists = ${exists}
     
-    # Убедимся, что структура правильная
-    if 'repository_uuid' not in staging:
-        staging['repository_uuid'] = '$uuid'
-    if 'files' not in staging:
-        staging['files'] = []
-    if 'pending_commit' not in staging:
-        staging['pending_commit'] = None
-    
-    # Декодируем содержимое файла из JSON строки
-    file_content = json.loads('''$file_content_escaped''')
-    
-    # Проверяем, не добавлен ли файл уже
-    file_exists = False
-    for i, f in enumerate(staging['files']):
-        if f.get('path') == '$relative_path':
-            # Обновляем существующий файл
-            staging['files'][i]['action'] = '$action'
-            staging['files'][i]['content'] = file_content
-            file_exists = True
+    # Проверяем, не добавлен ли уже в staging
+    item_index = -1
+    for j, f in enumerate(staging['files']):
+        if f.get('path') == relative_path:
+            item_index = j
             break
     
-    if not file_exists:
-        # Добавляем новый файл
-        staging['files'].append({
-            'path': '$relative_path',
-            'action': '$action',
-            'content': file_content
-        })
+    # Создаем запись
+    item_entry = {
+        'path': relative_path,
+        'action': action,
+        'is_directory': is_directory,
+        'timestamp': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+    }
+    
+    # Добавляем дополнительные данные в зависимости от типа изменения
+    if action == 'created':
+        if not is_directory and exists:
+            try:
+                with open(full_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                item_entry['content'] = content
+                import hashlib
+                item_entry['hash'] = hashlib.md5(content.encode('utf-8')).hexdigest()
+            except Exception as e:
+                pass
+    elif action == 'updated':
+        if not is_directory and exists:
+            try:
+                with open(full_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                item_entry['content'] = content
+                import hashlib
+                item_entry['hash'] = hashlib.md5(content.encode('utf-8')).hexdigest()
+                
+                # Добавляем старый хеш, если есть
+                import json as json_module
+                previous_state = json_module.loads('''${previous_state_json}''')
+                previous_entry = None
+                for entry in previous_state.get('structure', []):
+                    if entry.get('path') == relative_path:
+                        previous_entry = entry
+                        break
+                if previous_entry and previous_entry.get('hash'):
+                    item_entry['old_hash'] = previous_entry['hash']
+            except Exception as e:
+                pass
+    elif action == 'renamed':
+        # Ищем старый путь в предыдущем состоянии
+        import json as json_module
+        previous_state = json_module.loads('''${previous_state_json}''')
+        previous_entry = None
+        for entry in previous_state.get('structure', []):
+            if entry.get('path') != relative_path and (entry.get('old_path') == relative_path or entry.get('path') == relative_path):
+                previous_entry = entry
+                break
+        if previous_entry:
+            item_entry['old_path'] = previous_entry.get('path')
+            item_entry['hash'] = previous_entry.get('hash')
+    elif action == 'deleted':
+        # Для удаленных файлов получаем информацию из предыдущего состояния
+        import json as json_module
+        previous_state = json_module.loads('''${previous_state_json}''')
+        previous_entry = None
+        for entry in previous_state.get('structure', []):
+            if entry.get('path') == relative_path:
+                previous_entry = entry
+                break
+        if previous_entry:
+            item_entry['is_directory'] = previous_entry.get('is_directory', False)
+            item_entry['hash'] = previous_entry.get('hash')
+    
+    # Обновляем или добавляем запись
+    if item_index >= 0:
+        staging['files'][item_index] = item_entry
+    else:
+        staging['files'].append(item_entry)
     
     print(json.dumps(staging, ensure_ascii=False))
 except Exception as e:
@@ -273,64 +391,170 @@ PYTHON
 )"
     
     if [[ $? -ne 0 ]]; then
-      echo "[ERROR] Не удалось обновить staging area для файла: $file_path" >&2
-      has_errors=1
+      errors+=("$item")
       continue
     fi
     
-    echo "[OK] Файл добавлен в staging area: $relative_path"
+    added_items+=("$relative_path|$action|$is_directory")
+    echo "[OK] Добавлено: $relative_path ($action)" >&2
   done
   
-  # 12. Сохранить staging area после обработки всех файлов
-  if [[ $has_errors -eq 0 ]]; then
-    if save_staging_area "$staging_json"; then
-      : # Успешно сохранено
-    else
-      echo "[ERROR] Не удалось сохранить staging area" >&2
-      exit 1
+  # 9. Сохранить staging area
+  if ! save_staging_area "$staging_json"; then
+    echo "[ERROR] Не удалось сохранить staging area" >&2
+    exit 1
+  fi
+  
+  # Выводим статистику
+  if [[ ${#added_items[@]} -gt 0 ]]; then
+    echo ""
+    echo "[OK] Статистика добавленных изменений:" >&2
+    
+    # Группируем по действиям
+    local created_count=0 created_files=0 created_dirs=0
+    local updated_count=0 updated_files=0 updated_dirs=0
+    local deleted_count=0 deleted_files=0 deleted_dirs=0
+    local renamed_count=0 renamed_files=0 renamed_dirs=0
+    
+    for item_info in "${added_items[@]}"; do
+      IFS='|' read -r path action is_dir <<< "$item_info"
+      case "$action" in
+        created)
+          ((created_count++))
+          if [[ "$is_dir" == "true" ]]; then
+            ((created_dirs++))
+          else
+            ((created_files++))
+          fi
+          ;;
+        updated)
+          ((updated_count++))
+          if [[ "$is_dir" == "true" ]]; then
+            ((updated_dirs++))
+          else
+            ((updated_files++))
+          fi
+          ;;
+        deleted)
+          ((deleted_count++))
+          if [[ "$is_dir" == "true" ]]; then
+            ((deleted_dirs++))
+          else
+            ((deleted_files++))
+          fi
+          ;;
+        renamed)
+          ((renamed_count++))
+          if [[ "$is_dir" == "true" ]]; then
+            ((renamed_dirs++))
+          else
+            ((renamed_files++))
+          fi
+          ;;
+      esac
+    done
+    
+    if [[ $created_count -gt 0 ]]; then
+      echo "  created: $created_count" >&2
+      if [[ $created_files -gt 0 ]]; then
+        echo "    Файлов: $created_files" >&2
+      fi
+      if [[ $created_dirs -gt 0 ]]; then
+        echo "    Директорий: $created_dirs" >&2
+      fi
     fi
-  else
-    # Сохраняем staging area даже если были ошибки, чтобы не потерять успешно добавленные файлы
-    if save_staging_area "$staging_json"; then
-      echo "[WARNING] Некоторые файлы не были добавлены, но staging area сохранен" >&2
-      exit 1
-    else
-      echo "[ERROR] Не удалось сохранить staging area" >&2
-      exit 1
+    
+    if [[ $updated_count -gt 0 ]]; then
+      echo "  updated: $updated_count" >&2
+      if [[ $updated_files -gt 0 ]]; then
+        echo "    Файлов: $updated_files" >&2
+      fi
+      if [[ $updated_dirs -gt 0 ]]; then
+        echo "    Директорий: $updated_dirs" >&2
+      fi
     fi
+    
+    if [[ $deleted_count -gt 0 ]]; then
+      echo "  deleted: $deleted_count" >&2
+      if [[ $deleted_files -gt 0 ]]; then
+        echo "    Файлов: $deleted_files" >&2
+      fi
+      if [[ $deleted_dirs -gt 0 ]]; then
+        echo "    Директорий: $deleted_dirs" >&2
+      fi
+    fi
+    
+    if [[ $renamed_count -gt 0 ]]; then
+      echo "  renamed: $renamed_count" >&2
+      if [[ $renamed_files -gt 0 ]]; then
+        echo "    Файлов: $renamed_files" >&2
+      fi
+      if [[ $renamed_dirs -gt 0 ]]; then
+        echo "    Директорий: $renamed_dirs" >&2
+      fi
+    fi
+  fi
+  
+  if [[ ${#ignored_items[@]} -gt 0 ]]; then
+    echo ""
+    echo "[INFO] Проигнорировано: ${#ignored_items[@]}" >&2
+  fi
+  
+  if [[ ${#errors[@]} -gt 0 ]]; then
+    echo ""
+    echo "[ERROR] Ошибки при обработке: ${#errors[@]}" >&2
+    exit 1
   fi
 }
 
 # ============================================================================
 # Создание коммита
-# Команда: ergovcs commit -m "Сообщение"
-# Создаёт коммит с изменениями в папке media/version_management/<UUID>/
+# Команда: ergovcs commit --message "Сообщение" [--update-changes] [--edit-message]
+# Создаёт коммит с изменениями
 # ============================================================================
 cmd_commit() {
-  # create должен подготовить локальные метаданные в рабочей директории
-
-  # 1. Получить сообщение коммита из аргумента -m
+  # 1. Парсинг аргументов
   local message=""
+  local update_changes=false
+  local edit_message=false
   
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      -m|--message) shift; message="${1:-}" ;;
-      *) echo "[WARN] Неизвестный параметр: $1" >&2 ;;
+      -m|--message)
+        shift
+        message="${1:-}"
+        ;;
+      -uc|--update-changes)
+        update_changes=true
+        ;;
+      -em|--edit-message)
+        edit_message=true
+        # Проверяем, есть ли следующее значение для сообщения
+        if [[ $# -gt 1 ]] && [[ ! "$2" =~ ^- ]]; then
+          shift
+          message="$1"
+        fi
+        ;;
+      *)
+        if [[ -z "$message" ]] && [[ ! "$1" =~ ^- ]]; then
+          message="$1"
+        fi
+        ;;
     esac
     shift || true
   done
   
-  if [[ -z "$message" ]]; then
-    echo "[ERROR] Необходимо указать сообщение коммита" >&2
-    echo "Использование: ergovcs commit -m \"Сообщение\"" >&2
+  # Валидация опций
+  if [[ "$update_changes" == "true" ]] && [[ "$edit_message" == "true" ]]; then
+    echo "[ERROR] Опции --update-changes и --edit-message не могут использоваться вместе." >&2
     exit 1
   fi
   
-  # 2. Найти корень репозитория
+  # 2. Определить корень репозитория
   local repo_root
   repo_root="$(find_repository_root)"
   if [[ -z "$repo_root" ]]; then
-    echo "[ERROR] Не удалось найти репозиторий. Убедитесь, что вы находитесь в директории репозитория." >&2
+    echo "[ERROR] Не удалось найти репозиторий." >&2
     exit 1
   fi
   
@@ -339,13 +563,13 @@ cmd_commit() {
   uuid="$(get_current_repository_uuid)"
   if [[ -z "$uuid" ]]; then
     echo "[ERROR] Не удалось определить UUID репозитория." >&2
-    echo "[INFO] Убедитесь, что репозиторий был клонирован или создан через команду clone/create." >&2
     exit 1
   fi
   
   # 4. Прочитать staging area
-  if ! command -v python3 >/dev/null 2>&1; then
-    echo "[ERROR] python3 не установлен. Установите его для работы со staging area." >&2
+  local staging_file="$repo_root/.ergovcs/staging.json"
+  if [[ ! -f "$staging_file" ]]; then
+    echo "[ERROR] Staging area не найден." >&2
     exit 1
   fi
   
@@ -356,114 +580,211 @@ cmd_commit() {
   local files_count
   files_count="$(echo "$staging_json" | python3 -c "import json, sys; data = json.load(sys.stdin); print(len(data.get('files', [])))" 2>/dev/null)"
   if [[ -z "$files_count" ]] || [[ "$files_count" -eq 0 ]]; then
-    echo "[ERROR] Нет файлов в staging area. Используйте команду 'add' для добавления файлов." >&2
-    exit 1
-  fi
-  
-  # 6. Проверить, есть ли уже pending_commit
-  local has_pending
-  has_pending="$(echo "$staging_json" | python3 -c "import json, sys; data = json.load(sys.stdin); print('true' if data.get('pending_commit') else 'false')" 2>/dev/null)"
-  
-  if [[ "$has_pending" == "true" ]]; then
-    echo "[INFO] Обнаружен незавершенный коммит. Файлы будут добавлены к существующему коммиту." >&2
-    echo "[INFO] Используйте команду 'push' для отправки коммита на сервер." >&2
-    
-    # Обновляем сообщение коммита и время создания
-    local updated_staging
-    updated_staging="$(echo "$staging_json" | python3 - <<PYTHON
-import json
-import sys
-from datetime import datetime
-
-try:
-    staging = json.load(sys.stdin)
-    staging['pending_commit'] = {
-        'message': '$message',
-        'created_at': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
-    }
-    print(json.dumps(staging, ensure_ascii=False))
-except Exception as e:
-    print(f"[ERROR] Ошибка при обновлении staging area: {e}", file=sys.stderr)
-    sys.exit(1)
-PYTHON
-)"
-    
-    if [[ $? -ne 0 ]]; then
-      echo "[ERROR] Не удалось обновить staging area" >&2
+    if [[ "$edit_message" != "true" ]]; then
+      echo "[ERROR] Нет файлов в staging area." >&2
       exit 1
     fi
-    
-    if save_staging_area "$updated_staging"; then
-      echo "[OK] Коммит обновлен. Сообщение: $message"
-      echo "[INFO] Всего файлов в коммите: $files_count"
-    else
-      echo "[ERROR] Не удалось сохранить staging area" >&2
-      exit 1
-    fi
-    return
   fi
   
-  # 7. Подготовить данные для API (извлекаем файлы из staging)
+  # 6. Получить автора коммита
+  local author
+  author="$(get_commit_author)"
+  echo "[INFO] Автор коммита: $author" >&2
+  
+  # 7. Определить тип коммита
   local files_json
   files_json="$(echo "$staging_json" | python3 -c "import json, sys; data = json.load(sys.stdin); print(json.dumps(data.get('files', [])))" 2>/dev/null)"
+  local commit_type
+  commit_type="$(get_commit_type "$files_json" "$message")"
   
-  # 8. Вызвать API для создания коммита
-  echo "[INFO] Создание коммита через API..."
-  
-  local response
-  response="$(api_create_commit "$uuid" "$message" "$files_json")"
-  
-  if [[ $? -ne 0 ]] || [[ -z "$response" ]]; then
-    echo "[ERROR] Не удалось создать коммит через API" >&2
-    exit 1
+  # 8. Запросить сообщение, если оно не указано
+  if [[ -z "$message" ]] && [[ "$update_changes" != "true" ]]; then
+    echo "[INFO] Введите сообщение коммита:" >&2
+    read -r message
+    
+    if [[ -z "$message" ]]; then
+      echo "[ERROR] Сообщение коммита не может быть пустым." >&2
+      exit 1
+    fi
   fi
   
-  # 9. Парсим ответ от API
-  local commit_hash
-  commit_hash="$(echo "$response" | python3 -c "import json, sys; data = json.load(sys.stdin); print(data.get('hash') or data.get('id', ''))" 2>/dev/null)"
+  # Добавляем тип к сообщению, если его там нет
+  local commit_types=("feat" "fix" "docs" "style" "refactor" "test" "chore" "perf" "ci" "build" "revert")
+  local has_type=false
   
-  if [[ -z "$commit_hash" ]]; then
-    echo "[WARN] Не удалось извлечь хеш коммита из ответа API" >&2
-    commit_hash="unknown"
+  if echo "$message" | grep -qE '^(\w+):'; then
+    local type_in_message
+    type_in_message="$(echo "$message" | sed -E 's/^(\w+):.*/\1/')"
+    for ct in "${commit_types[@]}"; do
+      if [[ "$type_in_message" == "$ct" ]]; then
+        has_type=true
+        break
+      fi
+    done
   fi
   
-  echo "[OK] Коммит создан успешно."
-  echo "Хеш коммита: $commit_hash"
-  echo "Сообщение: $message"
-  echo "Файлов: $files_count"
+  if [[ "$has_type" == "false" ]]; then
+    message="$commit_type: $message"
+    echo "[INFO] Автоматически определен тип коммита: $commit_type" >&2
+  fi
   
-  # 10. Создаем pending_commit для отслеживания незавершенного коммита
-  local updated_staging
-  updated_staging="$(echo "$staging_json" | python3 - <<PYTHON
-import json
-import sys
+  # 9. Классификация изменений
+  local action_stats_json
+  action_stats_json="$(echo "$files_json" | python3 -c "
+import json, sys
+files = json.load(sys.stdin)
+stats = {
+    'created': {'count': 0, 'files': 0, 'dirs': 0},
+    'updated': {'count': 0, 'files': 0, 'dirs': 0},
+    'deleted': {'count': 0, 'files': 0, 'dirs': 0},
+    'renamed': {'count': 0, 'files': 0, 'dirs': 0}
+}
+
+for file in files:
+    action = file.get('action', '')
+    is_dir = file.get('is_directory', False)
+    if action in stats:
+        stats[action]['count'] += 1
+        if is_dir:
+            stats[action]['dirs'] += 1
+        else:
+            stats[action]['files'] += 1
+
+print(json.dumps(stats))
+")"
+  
+  local change_summary
+  change_summary="$(echo "$action_stats_json" | python3 -c "
+import json, sys
+stats = json.load(sys.stdin)
+summary_parts = []
+
+for action in ['created', 'updated', 'deleted', 'renamed']:
+    if stats[action]['count'] > 0:
+        summary = f\"{stats[action]['count']} {action}\"
+        if stats[action]['files'] > 0:
+            summary += f\" ({stats[action]['files']} файлов\"
+            if stats[action]['dirs'] > 0:
+                summary += f\", {stats[action]['dirs']} директорий\"
+            summary += \")\"
+        elif stats[action]['dirs'] > 0:
+            summary += f\" ({stats[action]['dirs']} директорий)\"
+        summary_parts.append(summary)
+
+print(', '.join(summary_parts) if summary_parts else 'нет изменений')
+")"
+  
+  # 10. Обработка файла commit.json
+  local commit_file="$repo_root/.ergovcs/commit.json"
+  local existing_commit_json=""
+  
+  if [[ -f "$commit_file" ]]; then
+    existing_commit_json="$(cat "$commit_file" 2>/dev/null)"
+  fi
+  
+  # 11. Создание/обновление коммита
+  local commit_json
+  commit_json="$(python3 - <<PYTHON
+import json, sys
 from datetime import datetime
 
+uuid = '${uuid}'
+message = '''${message}'''
+author = '${author}'
+commit_type = '${commit_type}'
+files_json = '''${files_json}'''
+action_stats_json = '''${action_stats_json}'''
+change_summary = '''${change_summary}'''
+existing_commit_json = '''${existing_commit_json}'''
+update_changes = ${update_changes}
+edit_message = ${edit_message}
+
 try:
-    staging = json.load(sys.stdin)
-    staging['pending_commit'] = {
-        'message': '$message',
-        'created_at': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
-        'hash': '$commit_hash'
-    }
-    print(json.dumps(staging, ensure_ascii=False))
-except Exception as e:
-    print(f"[ERROR] Ошибка при обновлении staging area: {e}", file=sys.stderr)
-    sys.exit(1)
+    files = json.loads(files_json)
+    action_stats = json.loads(action_stats_json)
+except:
+    files = []
+    action_stats = {'created': {'count': 0}, 'updated': {'count': 0}, 'deleted': {'count': 0}, 'renamed': {'count': 0}}
+
+commit = {
+    'repository_uuid': uuid,
+    'message': message,
+    'author': author,
+    'type': commit_type,
+    'created_at': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
+    'files': files,
+    'change_summary': change_summary,
+    'stats': action_stats
+}
+
+if edit_message or update_changes:
+    if not existing_commit_json:
+        print('[ERROR] Не существует коммита для редактирования.', file=sys.stderr)
+        sys.exit(1)
+    
+    try:
+        existing_commit = json.loads(existing_commit_json)
+    except:
+        print('[ERROR] Не удалось прочитать существующий коммит.', file=sys.stderr)
+        sys.exit(1)
+    
+    # Сохраняем исходную дату создания
+    commit['created_at'] = existing_commit.get('created_at', commit['created_at'])
+    
+    if edit_message:
+        # Обновляем только сообщение
+        commit['files'] = existing_commit.get('files', [])
+        commit['change_summary'] = existing_commit.get('change_summary', '')
+        commit['stats'] = existing_commit.get('stats', {})
+    elif update_changes:
+        # Обновляем только файлы
+        commit['message'] = existing_commit.get('message', message)
+        commit['type'] = existing_commit.get('type', commit_type)
+        commit['files'] = files
+
+print(json.dumps(commit, ensure_ascii=False))
 PYTHON
 )"
   
-  # 11. Сохраняем staging area с pending_commit
-  # Файлы остаются в staging area до команды push
   if [[ $? -ne 0 ]]; then
-    echo "[WARN] Коммит создан, но не удалось сохранить информацию о pending_commit" >&2
-  else
-    if save_staging_area "$updated_staging"; then
-      echo "[INFO] Используйте команду 'push' для отправки коммита на сервер."
-    else
-      echo "[WARN] Коммит создан, но не удалось сохранить информацию о pending_commit" >&2
-    fi
+    echo "[ERROR] Не удалось создать коммит" >&2
+    exit 1
   fi
+  
+  # 12. Сохранить коммит в файл commit.json
+  echo "$commit_json" > "$commit_file"
+  
+  echo ""
+  echo "[OK] Коммит создан локально." >&2
+  
+  local commit_message commit_type_display commit_author commit_summary
+  commit_message="$(echo "$commit_json" | python3 -c "import json, sys; print(json.load(sys.stdin).get('message', ''))")"
+  commit_type_display="$(echo "$commit_json" | python3 -c "import json, sys; print(json.load(sys.stdin).get('type', ''))")"
+  commit_author="$(echo "$commit_json" | python3 -c "import json, sys; print(json.load(sys.stdin).get('author', ''))")"
+  commit_summary="$(echo "$commit_json" | python3 -c "import json, sys; print(json.load(sys.stdin).get('change_summary', ''))")"
+  
+  echo "Тип: $commit_type_display" >&2
+  echo "Сообщение: $commit_message" >&2
+  echo "Автор: $commit_author" >&2
+  echo "Изменения: $commit_summary" >&2
+  
+  # 13. Очистить staging area (только если не редактируем сообщение)
+  if [[ "$edit_message" != "true" ]]; then
+    local empty_staging_json
+    empty_staging_json="$(python3 -c "
+import json
+print(json.dumps({
+    'repository_uuid': '${uuid}',
+    'files': []
+}))
+")"
+    echo "$empty_staging_json" > "$staging_file"
+    echo "[INFO] Staging area очищен." >&2
+  else
+    echo "[INFO] Staging area сохранен для возможных изменений." >&2
+  fi
+  
+  echo "[INFO] Используйте команду 'push' для отправки коммита на сервер." >&2
 }
 
 # ============================================================================
