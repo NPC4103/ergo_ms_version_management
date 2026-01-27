@@ -116,6 +116,7 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                         # Создаем файл с информацией о начальном коммите
                         initial_commit_info = {
                             'hash': 'initial',
+                            'parents': [],
                             'message': 'Initial commit',
                             'branch': default_branch.name,
                             'created_at': repository.created_at.isoformat(),
@@ -1059,6 +1060,7 @@ class BranchViewSet(viewsets.ModelViewSet):
                     # Создаем файл с информацией о начальном коммите
                     initial_commit_info = {
                         'hash': 'initial',
+                        'parents': [],
                         'message': 'Initial commit',
                         'branch': branch.name,
                         'created_at': repository.created_at.isoformat(),
