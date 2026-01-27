@@ -148,8 +148,7 @@ with open(file_path, 'w') as f:
 # Добавляет файл для коммита
 # ============================================================================
 cmd_add() {
-  # `create` пока не создаёт идентификационную папку/файл в рабочей директории,
-  # это нужно учитывать при тестировании
+  # create должен подготовить локальные метаданные в рабочей директории
   
   # 1. Найти корень репозитория
   local repo_root
@@ -308,8 +307,7 @@ PYTHON
 # Создаёт коммит с изменениями в папке media/version_management/<UUID>/
 # ============================================================================
 cmd_commit() {
-  # `create` пока не создаёт идентификационную папку/файл в рабочей директории,
-  # это нужно учитывать при тестировании
+  # create должен подготовить локальные метаданные в рабочей директории
 
   # 1. Получить сообщение коммита из аргумента -m
   local message=""
@@ -636,56 +634,181 @@ PY
 }
 
 cmd_create() {
-  # Создание репозитория через API
-  # Использует API эндпоинт /api/repositories/ для избежания дублирования функционала
-  # Примечание: API не поддерживает description, поэтому параметр --description игнорируется
-  
   local name=""
   local description=""
+  local is_private="false"
+  local is_read_only="false"
+  local branch_name=""
+  local cli_username=""
+  local cli_password=""
+  local local_path=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --name) shift; name="${1:-}" ;;
-      --description) shift; description="${1:-}"; echo "[WARN] Параметр --description не поддерживается API и будет проигнорирован" >&2 ;;
-      --root) shift; echo "[WARN] Параметр --root игнорируется при работе через API" >&2 ;;
-      *) echo "[WARN] Неизвестный параметр: $1" >&2 ;;
+      --name|-n) shift; name="${1:-}" ;;
+      --description|-d) shift; description="${1:-}" ;;
+      --private|-p) is_private="true" ;;
+      --read-only) is_read_only="true" ;;
+      --branch|-b) shift; branch_name="${1:-}" ;;
+      --username|-u) shift; cli_username="${1:-}" ;;
+      --password|-pw) shift; cli_password="${1:-}" ;;
+      --root|-r)
+        shift
+        local_path="${1:-}"
+        echo "[INFO] Указан локальный путь: $local_path"
+        ;;
+      *)
+        if [[ -z "$name" && "$1" != -* ]]; then
+          name="$1"
+        else
+          echo "[WARN] Неизвестный параметр: $1" >&2
+        fi
+        ;;
     esac
     shift || true
   done
 
-  [[ -z "$name" ]] && read -rp "Название репозитория: " name
+  if [[ -z "$name" ]]; then
+    read -rp "Название репозитория: " name
+  fi
+  if [[ -z "$name" ]]; then
+    echo "[ERROR] Необходимо указать название репозитория" >&2
+    exit 1
+  fi
+
+  if [[ -z "$local_path" ]]; then
+    local_path="$(pwd)"
+  fi
+  mkdir -p "$local_path"
+  local_path="$(cd "$local_path" && pwd)"
+
+  if [[ -n "$cli_username" || -n "$cli_password" ]]; then
+    if [[ -z "$cli_username" || -z "$cli_password" ]]; then
+      echo "[WARN] Для авторизации нужны --username и --password (оба)." >&2
+    fi
+  fi
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "[ERROR] python3 не установлен. Установите его для работы с create." >&2
+    exit 1
+  fi
+
+  local body
+  body="$(python3 - <<PY
+import json
+payload = {}
+name = ${name@Q}
+description = ${description@Q}
+branch = ${branch_name@Q}
+cli_username = ${cli_username@Q}
+cli_password = ${cli_password@Q}
+is_private = ${is_private@Q}
+is_read_only = ${is_read_only@Q}
+if name:
+    payload["name"] = name
+if description:
+    payload["description"] = description
+if is_private == "true":
+    payload["is_private"] = True
+if is_read_only == "true":
+    payload["is_read_only"] = True
+if branch:
+    payload["initial_branch_name"] = branch
+if cli_username:
+    payload["cli_username"] = cli_username
+if cli_password:
+    payload["cli_password"] = cli_password
+print(json.dumps(payload))
+PY
+)"
 
   echo "[INFO] Создание репозитория через API..."
-  
   local response
-  response="$(api_create_repository "$name")"
-  
+  response="$(api_request "POST" "/repositories/" "$body")"
   if [[ $? -ne 0 ]]; then
     echo "[ERROR] Не удалось создать репозиторий" >&2
     exit 1
   fi
-  
-  # Парсим ответ от API
+
   local repo_id
   local repo_name
   local repo_path
   local created_at
-  
-  repo_id="$(echo "$response" | grep -o '"public_id"[^,]*' | cut -d'"' -f4)"
-  if [[ -z "$repo_id" ]]; then
-    repo_id="$(echo "$response" | grep -o '"id"[^,]*' | cut -d'"' -f4)"
-  fi
-  repo_name="$(echo "$response" | grep -o '"name"[^,]*' | cut -d'"' -f4)"
-  repo_path="$(echo "$response" | grep -o '"path"[^,]*' | cut -d'"' -f4)"
-  created_at="$(echo "$response" | grep -o '"created_at"[^,]*' | cut -d'"' -f4)"
+
+  repo_id="$(echo "$response" | python3 - <<'PY'
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    print(data.get("public_id") or data.get("id") or "")
+except Exception:
+    print("")
+PY
+)"
+  repo_name="$(echo "$response" | python3 - <<'PY'
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    print(data.get("name") or "")
+except Exception:
+    print("")
+PY
+)"
+  repo_path="$(echo "$response" | python3 - <<'PY'
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    print(data.get("path") or "")
+except Exception:
+    print("")
+PY
+)"
+  created_at="$(echo "$response" | python3 - <<'PY'
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    print(data.get("created_at") or "")
+except Exception:
+    print("")
+PY
+)"
   if [[ -z "$repo_path" && -n "$repo_id" ]]; then
     repo_path="media/version_management/$repo_id"
   fi
-  
+
+  local ergovcs_dir="$local_path/.ergovcs"
+  mkdir -p "$ergovcs_dir"
+  cat >"$ergovcs_dir/config.json" <<JSON
+{
+  "repository_uuid": "$repo_id",
+  "name": "$repo_name",
+  "local_path": "$local_path",
+  "remote_path": "$repo_path",
+  "current_branch": "${branch_name:-main}",
+  "created_at": "$created_at"
+}
+JSON
+
+  local ignore_file="$local_path/.ergovcsignore"
+  if [[ ! -f "$ignore_file" ]]; then
+    cat >"$ignore_file" <<'EOF'
+.ergovcs/
+EOF
+  fi
+
+  local readme_file="$local_path/README.md"
+  if [[ ! -f "$readme_file" ]]; then
+    cat >"$readme_file" <<'EOF'
+# Repository
+
+Created by ergovcs.
+EOF
+  fi
+
   echo "[OK] Репозиторий создан."
   echo "UUID:   $repo_id"
   echo "Название: $repo_name"
   echo "Путь:   $repo_path"
+  echo "Локальный путь: $local_path"
   if [[ -n "$created_at" ]]; then
     echo "Создан: $created_at"
   fi
@@ -734,4 +857,165 @@ cmd_download() {
   echo "[OK] Репозиторий импортирован."
   echo "UUID:   $uuid"
   echo "Путь:   $target"
+}
+
+# ============================================================================
+# Управление ветками
+# Команда: ergovcs branch <list|create|delete|set-default> ...
+# ============================================================================
+cmd_branch() {
+  local action="${1:-}"
+  shift || true
+
+  if [[ -z "$action" ]]; then
+    echo "[ERROR] Использование: ergovcs branch <list|create|delete|set-default>" >&2
+    exit 1
+  fi
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "[ERROR] python3 не установлен. Установите его для работы с ветками." >&2
+    exit 1
+  fi
+
+  local repo_uuid=""
+  local branch_name=""
+  local branch_id=""
+  local cli_username=""
+  local cli_password=""
+  local check_permissions="true"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo) shift; repo_uuid="${1:-}" ;;
+      --name) shift; branch_name="${1:-}" ;;
+      --id) shift; branch_id="${1:-}" ;;
+      --username|-u) shift; cli_username="${1:-}" ;;
+      --password|-pw) shift; cli_password="${1:-}" ;;
+      --no-check-permissions) check_permissions="false" ;;
+      *) echo "[WARN] Неизвестный параметр: $1" >&2 ;;
+    esac
+    shift || true
+  done
+
+  if [[ -n "$cli_username" || -n "$cli_password" ]]; then
+    if [[ -z "$cli_username" || -z "$cli_password" ]]; then
+      echo "[WARN] Для авторизации нужны --username и --password (оба)." >&2
+    fi
+  fi
+
+  case "$action" in
+    list)
+      if [[ -z "$repo_uuid" ]]; then
+        echo "[ERROR] Нужно указать --repo <UUID>" >&2
+        exit 1
+      fi
+      local response
+      response="$(api_list_branches "$repo_uuid")" || exit 1
+      echo "$response" | python3 - <<'PY'
+import json, sys
+data = json.load(sys.stdin)
+branches = data.get("branches", data)
+if isinstance(branches, list):
+    for b in branches:
+        name = b.get("name")
+        bid = b.get("id")
+        is_default = b.get("is_default")
+        print(f"- {name} (id={bid}, default={is_default})")
+else:
+    print(json.dumps(data, ensure_ascii=False, indent=2))
+PY
+      ;;
+    create)
+      if [[ -z "$repo_uuid" || -z "$branch_name" ]]; then
+        echo "[ERROR] Нужно указать --repo <UUID> и --name <ветка>" >&2
+        exit 1
+      fi
+      api_create_branch "$repo_uuid" "$branch_name" "$cli_username" "$cli_password" "$check_permissions" >/dev/null
+      echo "[OK] Ветка создана: $branch_name"
+      ;;
+    delete)
+      if [[ -z "$branch_id" ]]; then
+        if [[ -n "$repo_uuid" && -n "$branch_name" ]]; then
+          local resp
+          resp="$(api_list_branches "$repo_uuid")" || exit 1
+          branch_id="$(echo "$resp" | python3 - <<PY
+import json, sys
+data = json.load(sys.stdin)
+branches = data.get("branches", data)
+target = "${branch_name}"
+for b in branches:
+    if b.get("name") == target:
+        print(b.get("id"))
+        sys.exit(0)
+print("")
+PY
+)"
+        fi
+      fi
+      if [[ -z "$branch_id" ]]; then
+        echo "[ERROR] Нужно указать --id <branch_id> (или --repo + --name для поиска)" >&2
+        exit 1
+      fi
+      api_delete_branch "$branch_id" >/dev/null
+      echo "[OK] Ветка удалена (id=$branch_id)"
+      ;;
+    set-default)
+      if [[ -n "$branch_id" ]]; then
+        api_set_default_branch_by_id "$branch_id" "$cli_username" "$cli_password" "$check_permissions" >/dev/null
+        echo "[OK] Ветка установлена по умолчанию (id=$branch_id)"
+      elif [[ -n "$repo_uuid" && -n "$branch_name" ]]; then
+        api_set_default_branch_by_name "$repo_uuid" "$branch_name" "$cli_username" "$cli_password" "$check_permissions" >/dev/null
+        echo "[OK] Ветка установлена по умолчанию: $branch_name"
+      else
+        echo "[ERROR] Нужно указать --id <branch_id> или --repo <UUID> и --name <ветка>" >&2
+        exit 1
+      fi
+      ;;
+    *)
+      echo "[ERROR] Неизвестное действие: $action" >&2
+      exit 1
+      ;;
+  esac
+}
+
+# ============================================================================
+# Древо файлов репозитория
+# Команда: ergovcs files --repo <UUID>
+# ============================================================================
+cmd_files() {
+  local repo_uuid=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo) shift; repo_uuid="${1:-}" ;;
+      *) echo "[WARN] Неизвестный параметр: $1" >&2 ;;
+    esac
+    shift || true
+  done
+
+  if [[ -z "$repo_uuid" ]]; then
+    echo "[ERROR] Нужно указать --repo <UUID>" >&2
+    exit 1
+  fi
+
+  local response
+  response="$(api_get_repo_files "$repo_uuid")" || exit 1
+
+  echo "$response" | python3 - <<'PY'
+import json, sys
+
+def render(items, prefix=""):
+    for i, item in enumerate(items):
+        is_last = (i == len(items) - 1)
+        connector = "└── " if is_last else "├── "
+        name = item.get("name", "")
+        if item.get("is_directory"):
+            print(f"{prefix}{connector}{name}/")
+            render(item.get("items") or [], prefix + ("    " if is_last else "│   "))
+        else:
+            print(f"{prefix}{connector}{name}")
+
+data = json.load(sys.stdin)
+root_items = data.get("structure") or data.get("items") or []
+render(root_items)
+PY
 }

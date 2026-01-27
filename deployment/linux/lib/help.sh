@@ -34,11 +34,28 @@ ergovcs <command> [options]
     Примечание: удаляет только локальную копию, не репозиторий на сервере
 
 Вспомогательные команды:
-  create [--name <имя>] [--description <текст>]
-    Создать новый локальный репозиторий
+  create [--name <имя>] [--description <текст>] [--private] [--read-only] [--branch <ветка>] [--username <u>] [--password <p>] [--root <путь>]
+    Создать новый репозиторий через API и подготовить локальные файлы
+
+  branch <list|create|delete|set-default> [опции]
+    Управление ветками (через API)
+    Примеры:
+      ergovcs branch list --repo <uuid>
+      ergovcs branch create --repo <uuid> --name <ветка> --username <u> --password <p>
+      ergovcs branch delete --id <branch_id>
+      ergovcs branch set-default --repo <uuid> --name <ветка>
+
+  files --repo <uuid>
+    Показать дерево файлов репозитория
     
   download --source <zip|dir> [--uuid <uuid>] [--name <имя>]
     Скачать/импортировать репозиторий из zip-архива или папки
+
+  install-cli
+    Установить CLI-обертку /usr/local/bin/ergovcs
+
+  uninstall-cli
+    Удалить CLI-обертку /usr/local/bin/ergovcs
     
   help
     Показать эту справку
@@ -53,8 +70,11 @@ ergovcs <command> [options]
   ergovcs push main
   ergovcs update main
   ergovcs remove abc-123-def-456
-  ./version_manager.sh create --name "Мой репозиторий" --description "Описание"
-  ./version_manager.sh download --source /path/to/repo.zip
+  ergovcs create --name "Мой репозиторий"
+  ergovcs download --source /path/to/repo.zip
+  ergovcs files --repo <uuid>
+  sudo ./version_manager.sh install-cli
+  sudo ./version_manager.sh uninstall-cli
 EOF
 }
 

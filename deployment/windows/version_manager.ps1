@@ -42,6 +42,7 @@ $LibDir    = Join-Path $ScriptDir "lib"
 . (Join-Path $LibDir "repo.ps1")
 . (Join-Path $LibDir "commands.ps1")
 . (Join-Path $LibDir "help.ps1")
+. (Join-Path $LibDir "cli.ps1")
 
 switch ($Command.ToLower()) {
   "clone"    { Invoke-Clone -Args $Args }
@@ -52,6 +53,10 @@ switch ($Command.ToLower()) {
   "remove"   { Invoke-Remove -Args $Args }
   "create"   { Invoke-Create -RepoArg $Args }
   "download" { Invoke-Download -Args $Args }
+  "branch"   { Invoke-Branch -Args $Args }
+  "files"    { Invoke-Files -Args $Args }
+  "install-cli" { Install-CliWrapper }
+  "uninstall-cli" { Uninstall-CliWrapper }
   "help"     { Show-Help }
   default    { Write-Host "[ERROR] Unknown command: $Command" -ForegroundColor Red; Show-Help; exit 1 }
 }

@@ -142,6 +142,95 @@ function Invoke-ApiCreateRepository {
   Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/" -Body $bodyJson
 }
 
+# Получить список репозиториев через API
+function Invoke-ApiListRepositories {
+  # Возвращает: JSON со списком репозиториев
+  Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/"
+}
+
+# Получить список веток репозитория
+function Invoke-ApiListBranches {
+  param([string]$RepoUuid)
+  Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/$RepoUuid/branches/"
+}
+
+# Создать ветку
+function Invoke-ApiCreateBranch {
+  param(
+    [string]$RepoUuid,
+    [string]$BranchName,
+    [string]$CliUsername = $null,
+    [string]$CliPassword = $null,
+    [bool]$CheckPermissions = $true
+  )
+
+  $bodyObj = @{
+    repository_public_id = $RepoUuid
+    name = $BranchName
+    check_permissions = $CheckPermissions
+  }
+  if ($CliUsername) { $bodyObj["cli_username"] = $CliUsername }
+  if ($CliPassword) { $bodyObj["cli_password"] = $CliPassword }
+
+  $body = $bodyObj | ConvertTo-Json -Depth 5
+  Invoke-ApiRequest -Method "POST" -Endpoint "/branches/" -Body $body
+}
+
+# Установить ветку по умолчанию (по id)
+function Invoke-ApiSetDefaultBranchById {
+  param(
+    [int]$BranchId,
+    [string]$CliUsername = $null,
+    [string]$CliPassword = $null,
+    [bool]$CheckPermissions = $true
+  )
+
+  $bodyObj = @{
+    branch_id = $BranchId
+    check_permissions = $CheckPermissions
+  }
+  if ($CliUsername) { $bodyObj["cli_username"] = $CliUsername }
+  if ($CliPassword) { $bodyObj["cli_password"] = $CliPassword }
+
+  $body = $bodyObj | ConvertTo-Json -Depth 5
+  Invoke-ApiRequest -Method "POST" -Endpoint "/branches/set_default/" -Body $body
+}
+
+# Установить ветку по умолчанию (по repo+name)
+function Invoke-ApiSetDefaultBranchByName {
+  param(
+    [string]$RepoUuid,
+    [string]$BranchName,
+    [string]$CliUsername = $null,
+    [string]$CliPassword = $null,
+    [bool]$CheckPermissions = $true
+  )
+
+  $bodyObj = @{
+    repository_public_id = $RepoUuid
+    branch_name = $BranchName
+    check_permissions = $CheckPermissions
+  }
+  if ($CliUsername) { $bodyObj["cli_username"] = $CliUsername }
+  if ($CliPassword) { $bodyObj["cli_password"] = $CliPassword }
+
+  $body = $bodyObj | ConvertTo-Json -Depth 5
+  Invoke-ApiRequest -Method "POST" -Endpoint "/branches/set_default/" -Body $body
+}
+
+# Удалить ветку
+function Invoke-ApiDeleteBranch {
+  param([int]$BranchId)
+  Invoke-ApiRequest -Method "DELETE" -Endpoint "/branches/$BranchId/"
+}
+
+# Получить дерево файлов репозитория
+function Invoke-ApiGetRepoFiles {
+  param([string]$RepoUuid)
+  Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/$RepoUuid/files/"
+}
+
+
 # Клонировать репозиторий через API
 function Invoke-ApiCloneRepository {
   param([string]$Uuid)
@@ -347,17 +436,17 @@ function Find-LocalRepositoryRoot {
 
 # Получить UUID текущего репозитория
 function Get-CurrentRepositoryUuid {
-  # Получаем корень репозитория (текущую директорию или ближайшую родительскую с .ergovcs)
-  $localPath = Find-LocalRepositoryRoot
-  if (-not $localPath) {
+  param([string[]]$LocalPath)
+
+  if (-not $LocalPath) {
     Write-Host "[DEBUG] Корень репозитория не найден" -ForegroundColor Gray
     return $null
   }
   
-  Write-Host "[DEBUG] Корень репозитория: $localPath" -ForegroundColor Gray
+  Write-Host "[DEBUG] Корень репозитория: $LocalPath" -ForegroundColor Gray
   
   # Путь к локальному файлу repos.json в .ergovcs директории
-  $localReposFile = Join-Path $localPath ".ergovcs" "repos.json"
+  $localReposFile = Join-Path $LocalPath ".ergovcs" "repos.json"
   Write-Host "[DEBUG] Ищем локальный файл: $localReposFile" -ForegroundColor Gray
   
   # Пробуем сначала прочитать из локального .ergovcs/repos.json
@@ -376,12 +465,12 @@ function Get-CurrentRepositoryUuid {
         
         Write-Host "[DEBUG] Проверяем репозиторий: $uuid" -ForegroundColor Gray
         Write-Host "[DEBUG]  local_path: $($repo.local_path)" -ForegroundColor Gray
-        Write-Host "[DEBUG]  current: $localPath" -ForegroundColor Gray
+        Write-Host "[DEBUG]  current: $LocalPath" -ForegroundColor Gray
         
         # Сравниваем пути (учитываем возможные различия в формате)
         if ($repo.local_path -and (
-            $repo.local_path -eq $localPath -or 
-            (Resolve-Path $repo.local_path -ErrorAction SilentlyContinue) -eq (Resolve-Path $localPath -ErrorAction SilentlyContinue))) {
+            $repo.local_path -eq $LocalPath -or 
+            (Resolve-Path $repo.local_path -ErrorAction SilentlyContinue) -eq (Resolve-Path $LocalPath -ErrorAction SilentlyContinue))) {
           Write-Host "[DEBUG] Найден UUID: $uuid" -ForegroundColor Gray
           return $uuid
         }
@@ -395,7 +484,7 @@ function Get-CurrentRepositoryUuid {
   }
   
   # Фолбэк: проверяем staging.json (если существует)
-  $stagingFile = Join-Path $localPath ".ergovcs\staging.json"
+  $stagingFile = Join-Path $LocalPath ".ergovcs\staging.json"
   if (Test-Path $stagingFile) {
     Write-Host "[DEBUG] Пробуем прочитать staging.json" -ForegroundColor Gray
     try {
@@ -424,8 +513,8 @@ function Get-CurrentRepositoryUuid {
         $repo = $property.Value
         
         if ($repo.local_path -and (
-            $repo.local_path -eq $localPath -or 
-            (Resolve-Path $repo.local_path -ErrorAction SilentlyContinue) -eq (Resolve-Path $localPath -ErrorAction SilentlyContinue))) {
+            $repo.local_path -eq $LocalPath -or 
+            (Resolve-Path $repo.local_path -ErrorAction SilentlyContinue) -eq (Resolve-Path $LocalPath -ErrorAction SilentlyContinue))) {
           Write-Host "[DEBUG] Найден UUID в глобальном файле: $uuid" -ForegroundColor Gray
           return $uuid
         }
@@ -442,12 +531,12 @@ function Get-CurrentRepositoryUuid {
 
 # Получить путь к файлу staging area
 function Get-StagingFilePath {
-  $localPath = Find-LocalRepositoryRoot
-  if (-not $localPath) {
+  $LocalPath = Find-LocalRepositoryRoot
+  if (-not $LocalPath) {
     return $null
   }
   
-  $ergovcsDir = Join-Path $localPath ".ergovcs"
+  $ergovcsDir = Join-Path $LocalPath ".ergovcs"
   New-Item -ItemType Directory -Force -Path $ergovcsDir | Out-Null
   return Join-Path $ergovcsDir "staging.json"
 }
@@ -483,9 +572,7 @@ function Get-StagingArea {
 
 # Сохранить staging area
 function Save-StagingArea {
-  param(
-    [hashtable]$Staging
-  )
+  param([hashtable]$Staging)
   
   $stagingFile = Get-StagingFilePath
   if (-not $stagingFile) {

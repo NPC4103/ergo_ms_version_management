@@ -102,6 +102,12 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                         # Создаем папку для коммитов в дефолтной ветке
                         commits_path = os.path.join(default_branch_path, 'commits')
                         os.makedirs(commits_path, exist_ok=True)
+
+                        readme_path = os.path.join(default_branch_path, 'README.md')
+                        with open(readme_path, 'w', encoding='utf-8') as f:
+                            f.write(f"# {default_branch.name}\n\n")
+                            f.write(f"{repository.description or 'No description provided.'}\n\n")
+
                         
                         # Создаем начальный коммит (опционально)
                         initial_commit_dir = os.path.join(commits_path, 'initial')
@@ -110,6 +116,7 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                         # Создаем файл с информацией о начальном коммите
                         initial_commit_info = {
                             'hash': 'initial',
+                            'parents': [],
                             'message': 'Initial commit',
                             'branch': default_branch.name,
                             'created_at': repository.created_at.isoformat(),
@@ -117,20 +124,21 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                             'files': []
                         }
                         
-                        initial_commit_path = os.path.join(initial_commit_dir, 'commit.json')
+                        initial_commit_path = os.path.join(default_branch_path, 'commit.json')
                         with open(initial_commit_path, 'w', encoding='utf-8') as f:
                             json.dump(initial_commit_info, f, indent=2, ensure_ascii=False)
-                    
+                       
                     # Создаем файл README.md в корне репозитория
-                    readme_path = os.path.join(repo_path, 'README.md')
-                    with open(readme_path, 'w', encoding='utf-8') as f:
-                        f.write(f"# {repository.name}\n\n")
-                        f.write(f"{repository.description or 'No description provided.'}\n\n")
-                        f.write(f"Created: {repository.created_at}\n")
-                        f.write(f"UUID: {repo_uuid}\n")
-                        f.write(f"Owner: User #{repository.owner_id}\n")
-                        f.write(f"Private: {repository.is_private}\n")
-                        f.write(f"Read-only: {repository.is_read_only}\n")
+                    # readme_path = os.path.join(repo_path, 'README.md')
+                    # with open(readme_path, 'w', encoding='utf-8') as f:
+                    #     f.write(f"# {repository.name}\n\n")
+                    #     f.write(f"{repository.description or 'No description provided.'}\n\n")
+                    #     f.write(f"Created: {repository.created_at}\n")
+                    #     f.write(f"UUID: {repo_uuid}\n")
+                    #     f.write(f"Owner: User #{repository.owner_id}\n")
+                    #     f.write(f"Private: {repository.is_private}\n")
+                    #     f.write(f"Read-only: {repository.is_read_only}\n")
+                    # Создаем файл README.md ветке
                     
                     # Создаем файл с метаинформацией о репозитории
                     repo_info_path = os.path.join(repo_path, '.repo_info.json')
@@ -1032,7 +1040,55 @@ class BranchViewSet(viewsets.ModelViewSet):
                     # Создаем подпапку для коммитов
                     commits_path = os.path.join(branch_path, 'commits')
                     os.makedirs(commits_path, exist_ok=True)
+
+                    # Создаем начальный коммит (опционально)
+                    commit_dir = os.path.join(commits_path, 'initial')
+                    os.makedirs(commit_dir, exist_ok=True)
+
+
+                    # Создаем файл README.md ветке
+                    readme_path = os.path.join(branch_path, 'README.md')
+                    if not os.path.exists(readme_path):
+                        with open(readme_path, 'w', encoding='utf-8') as f:
+                            f.write(f"# {branch.name}\n\n")
+                            f.write(f"{repository.description or 'No description provided.'}\n\n")
+                            f.write(f"Создана: {branch.created_at}\n")
+                        print(f"DEBUG: README.md создан")
+                    else:
+                        print(f"DEBUG: README.md уже существует, пропускаем создание")
+
+                    # Создаем файл с информацией о начальном коммите
+                    initial_commit_info = {
+                        'hash': 'initial',
+                        'parents': [],
+                        'message': 'Initial commit',
+                        'branch': branch.name,
+                        'created_at': repository.created_at.isoformat(),
+                        'author': 'System',
+                        'files': []
+                    }
+                        
+                    initial_commit_path = os.path.join(branch_path, 'commit.json')
                     
+                    if not os.path.exists(initial_commit_path):
+                        with open(initial_commit_path, 'w', encoding='utf-8') as f:
+                            json.dump(initial_commit_info, f, indent=2, ensure_ascii=False)
+                        
+                        print(f"DEBUG: commit.json создан")
+                    else:
+                        # Можно обновить существующий файл (опционально)
+                        with open(initial_commit_path, 'r+', encoding='utf-8') as f:
+                            existing_data = json.load(f)
+                            # Обновляем нужные поля
+                            existing_data.update({
+                                'branch': branch.name,
+                                'updated_at': branch.created_at.isoformat()
+                            })
+                            f.seek(0)
+                            json.dump(existing_data, f, indent=2, ensure_ascii=False)
+                            f.truncate()
+                        print(f"DEBUG: commit.json обновлен")
+
                     response_data = BranchSerializer(branch, context={'request': request}).data
                     response_data['physical_path'] = branch_path
                     response_data['physical_created'] = True
