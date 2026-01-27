@@ -204,75 +204,7 @@ class RepositoryViewSet(viewsets.ModelViewSet):
     lookup_field = 'public_id'
     lookup_url_kwarg = 'public_id'
 
-    @action(detail=True, methods=['get'], url_path='tree/(?P<branch_name>[^/.]+)')
-    def get_tree(self, request, public_id=None, branch_name='main'):
-        """
-        Возвращает список файлов и папок в конкретной ветке.
-        URL: /api/repositories/{public_id}/tree/{branch_name}/
-        """
-        repository = self.get_object()
-        # Определяем путь к папке ветки
-        # (Убедитесь, что при создании веток вы создаете соответствующие папки)
-        repo_path = MEDIA_ROOT / 'repositories' / str(repository.id) / branch_name
-
-        if not repo_path.exists():
-            return Response({'error': f'Ветка {branch_name} не инициализирована на сервере'}, status=404)
-
-        # Рекурсивно или только верхний уровень собираем файлы
-        items = []
-        try:
-            for entry in os.scandir(repo_path):
-                items.append({
-                    'name': entry.name,
-                    'is_dir': entry.is_dir(),
-                    'path': entry.name, # Для вложенности тут будет относительный путь
-                    'size': entry.stat().st_size if entry.is_file() else None
-                })
-        except Exception as e:
-            return Response({'error': str(e)}, status=500)
-
-        return Response({
-            'repository': repository.name,
-            'branch': branch_name,
-            'items': sorted(items, key=lambda x: (not x['is_dir'], x['name']))
-        })
-
-    @action(detail=True, methods=['get'], url_path='blob/(?P<branch_name>[^/.]+)')
-    def get_blob(self, request, public_id=None, branch_name='main'):
-        """
-        Возвращает содержимое конкретного файла.
-        URL: /api/repositories/{public_id}/blob/{branch_name}/?path=folder/file.py
-        """
-        repository = self.get_object()
-        file_relative_path = request.query_params.get('path')
-
-        if not file_relative_path:
-            return Response({'error': 'Не указан путь к файлу (path)'}, status=400)
-
-        # Безопасное формирование пути
-        full_path = (MEDIA_ROOT / 'repositories' / str(repository.id) / branch_name / file_relative_path).resolve()
-        
-        # Защита от выхода за пределы папки репозитория (Path Traversal)
-        base_repo_path = (MEDIA_ROOT / 'repositories' / str(repository.id) / branch_name).resolve()
-        if not str(full_path).startswith(str(base_repo_path)):
-            return Response({'error': 'Доступ запрещен'}, status=403)
-
-        if not full_path.exists() or not full_path.is_file():
-            return Response({'error': 'Файл не найден'}, status=404)
-
-        try:
-            # Читаем содержимое. Если файлы бинарные, нужна другая логика.
-            with open(full_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            return Response({
-                'name': full_path.name,
-                'path': file_relative_path,
-                'content': content,
-                'size': full_path.stat().st_size
-            })
-        except UnicodeDecodeError:
-            return Response({'error': 'Файл является бинарным и не может быть отображен как текст'}, status=400)
+    
 
     def get_queryset(self):
         """Возвращаем только репозитории, доступные текущему пользователю"""
