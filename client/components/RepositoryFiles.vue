@@ -5,7 +5,7 @@
             <router-link :to="{ name: 'RepositoryDetail', params: { id: repoId } }" class="btn btn-outline-secondary back-btn me-3 d-flex align-items-center">
                 <ArrowLeft :size="16" />
             </router-link>
-            <h5 class="m-0 text-white">Файлы: {{ repo.name }} <span class="text-muted">({{ currentBranch }})</span></h5>
+            <h5 class="m-0">Файлы: {{ repo.name }} <span class="text-muted">({{ currentBranch }})</span></h5>
         </div>
     </div>
 
@@ -17,7 +17,7 @@
         <!-- Sidebar: File Tree -->
         <div class="sidebar border-end border-secondary p-0 d-flex flex-column" style="width: 300px; min-width: 250px;">
              <!-- Breadcrumbs (Mini) -->
-             <div class="sidebar-header p-2 border-bottom border-secondary bg-darker">
+             <div class="sidebar-header p-2 border-bottom">
                 <div class="d-flex align-items-center flex-wrap gap-1 small font-monospace">
                     <span class="cursor-pointer hover-text-white" @click="navigateDir('')">ROOT</span>
                     <template v-for="(part, index) in currentPath.split('/').filter(Boolean)" :key="index">
@@ -51,16 +51,16 @@
         </div>
 
         <!-- Main Content: File Viewer -->
-        <div class="main-content flex-grow-1 d-flex flex-column bg-darker overflow-hidden">
+        <div class="main-content flex-grow-1 d-flex flex-column overflow-hidden">
             <div v-if="selectedFile && selectedFile.type !== 'dir'" class="h-100 d-flex flex-column">
-                <div class="editor-header p-2 border-bottom border-secondary d-flex justify-content-between align-items-center bg-dark">
+                <div class="editor-header p-2 border-bottom d-flex justify-content-between align-items-center">
                     <span class="font-monospace small">{{ selectedFile.name }}</span>
                     <div class="d-flex gap-2">
                         <button class="btn btn-sm btn-outline-success" @click="saveFile">Сохранить</button>
                     </div>
                 </div>
                 <div class="editor-body flex-grow-1 position-relative">
-                    <textarea class="form-control h-100 w-100 bg-darker text-white border-0 font-monospace p-3" 
+                    <textarea class="form-control h-100 w-100 border-0 font-monospace p-3 editor-textarea" 
                               style="resize: none; outline: none;"
                               v-model="fileContent"></textarea>
                 </div>
@@ -232,13 +232,59 @@ onMounted(() => loadData());
 </script>
 
 <style scoped>
-.repository-files-page { height: calc(100vh - 100px); display: flex; flex-direction: column; padding: 20px; }
-.ide-container { background: #1e1e1e; border: 1px solid #333; border-radius: 6px; overflow: hidden; }
-.sidebar { background: #252526; }
+.repository-files-page { 
+    height: calc(100vh - 100px); 
+    display: flex; 
+    flex-direction: column; 
+    padding: 20px; 
+}
+
+.ide-container { 
+    background: var(--color-primary-background); 
+    border: 1px solid var(--color-border); 
+    border-radius: 6px; 
+    overflow: hidden; 
+}
+
+.sidebar { 
+    background: var(--color-secondary-background); 
+}
+
+.sidebar-header {
+    background: var(--color-primary-background);
+    border-color: var(--color-border) !important;
+}
+
+.main-content {
+    background: var(--color-primary-background);
+}
+
+.editor-header {
+    background: var(--color-secondary-background);
+    border-color: var(--color-border) !important;
+}
+
+.editor-textarea {
+    background: var(--color-primary-background);
+    color: var(--color-primary-text);
+}
+
 .cursor-pointer { cursor: pointer; }
-.file-item:hover { background: #2a2d2e; color: #fff !important; }
-.file-item.active { background: #37373d; color: #fff !important; }
-.hover-text-white:hover { color: #fff; text-decoration: underline; }
-.bg-darker { background: #1e1e1e; }
-.border-primary { border-color: #0d6efd !important; }
+
+.file-item:hover { 
+    background: var(--color-hover-background); 
+}
+
+.file-item.active { 
+    background: var(--color-hover-background); 
+}
+
+.hover-text-white:hover { 
+    color: var(--color-primary-text); 
+    text-decoration: underline; 
+}
+
+.border-primary { 
+    border-color: var(--color-accent) !important; 
+}
 </style>

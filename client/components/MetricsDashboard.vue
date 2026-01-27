@@ -70,55 +70,75 @@
     </div>
 
     <!-- Metrics Grid -->
-    <div v-else class="row g-4">
-      <!-- Row 1: Frequency & Trend -->
-      <div class="col-lg-6">
-        <CommitFrequency 
-          :key="`cf-${filteredCommits.length}`"
-          :commits="filteredCommits" 
-          :period="period" 
-        />
-      </div>
-      <div class="col-lg-6">
-        <ActivityTrend 
-          :key="`at-${filteredCommits.length}`"
-          :commits="filteredCommits" 
-          :period="period" 
-        />
+    <div v-else>
+      <!-- KPI Dashboard -->
+      <div class="row g-4 mb-3">
+        <div class="col-12">
+          <KpiDashboard
+            :key="`kpi-${filteredCommits.length}`"
+            :commits="filteredCommits"
+            :period="period"
+          />
+        </div>
       </div>
 
-      <!-- Row 2: Burstiness (Full Width) -->
-      <div class="col-lg-12">
-        <Burstiness 
-          :key="`b-${filteredCommits.length}`"
-          :commits="filteredCommits" 
-          :period="period" 
-        />
-      </div>
+      <div class="row g-4">
+        <!-- Row 1: Heatmap & Frequency -->
+        <div class="col-lg-6">
+          <CommitHeatmap
+            :key="`hm-${filteredCommits.length}`"
+            :commits="filteredCommits"
+            :period="period"
+          />
+        </div>
+        <div class="col-lg-6">
+          <CommitFrequency 
+            :key="`cf-${filteredCommits.length}`"
+            :commits="filteredCommits" 
+            :period="period" 
+          />
+        </div>
 
-      <!-- Row 3: Technology Stack & Modernity -->
-      <div class="col-lg-6">
-        <TechnologyStack 
-          :key="`tsd-${filteredCommits.length}`"
-          :commits="filteredCommits" 
-          :period="period" 
-        />
-      </div>
-      <div class="col-lg-6">
-        <ModernityIndex 
-          :key="`mti-${filteredCommits.length}`"
-          :commits="filteredCommits" 
-          :period="period" 
-        />
-      </div>
+        <!-- Row 2: Activity Trend & Burstiness -->
+        <div class="col-lg-6">
+          <ActivityTrend 
+            :key="`at-${filteredCommits.length}`"
+            :commits="filteredCommits" 
+            :period="period" 
+          />
+        </div>
+        <div class="col-lg-6">
+          <Burstiness 
+            :key="`b-${filteredCommits.length}`"
+            :commits="filteredCommits" 
+            :period="period" 
+          />
+        </div>
 
-      <!-- Row 4: Semantic Changes (Full Width) -->
-      <div class="col-lg-12">
-        <SemanticChange 
-          :key="`csci-${filteredCommits.length}`"
-          :commits="filteredCommits" 
-          :period="period" 
-        />
+        <!-- Row 3: Technology Stack & Modernity -->
+        <div class="col-lg-6">
+          <TechnologyStack 
+            :key="`tsd-${filteredCommits.length}`"
+            :commits="filteredCommits" 
+            :period="period" 
+          />
+        </div>
+        <div class="col-lg-6">
+          <ModernityIndex 
+            :key="`mti-${filteredCommits.length}`"
+            :commits="filteredCommits" 
+            :period="period" 
+          />
+        </div>
+
+        <!-- Row 4: Semantic Changes (Full Width) -->
+        <div class="col-lg-12">
+          <SemanticChange 
+            :key="`csci-${filteredCommits.length}`"
+            :commits="filteredCommits" 
+            :period="period" 
+          />
+        </div>
       </div>
     </div>
 
@@ -137,6 +157,8 @@ import Burstiness from './dashboardMetricsComponents/Burstiness.vue';
 import TechnologyStack from './dashboardMetricsComponents/TechnologyStack.vue';
 import ModernityIndex from './dashboardMetricsComponents/ModernityIndex.vue';
 import SemanticChange from './dashboardMetricsComponents/SemanticChange.vue';
+import CommitHeatmap from './dashboardMetricsComponents/CommitHeatmap.vue';
+import KpiDashboard from './dashboardMetricsComponents/KpiDashboard.vue';
 
 const route = useRoute();
 const toast = useToast();
@@ -265,11 +287,16 @@ const generateMockCommits = (days = 30) => {
           selectedBranch = 'feature/metrics';
         }
         
+        const filesCount = Math.floor(Math.random() * 10) + 1;
+        const diffSizeBase = filesCount * (5 + Math.floor(Math.random() * 10));
+        const noise = Math.floor(Math.random() * 40) - 20;
+
         commits.push({
           hash: Math.random().toString(16).substr(2, 12),
           message: messages[Math.floor(Math.random() * messages.length)],
           branch: selectedBranch,
-          files_count: Math.floor(Math.random() * 10) + 1,
+          files_count: filesCount,
+          diff_size: Math.max(1, diffSizeBase + noise),
           created_at: commitDate.toISOString(),
           updated_at: commitDate.toISOString(),
           pushed: Math.random() > 0.2,
