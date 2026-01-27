@@ -247,17 +247,19 @@ function Invoke-ApiCreateCommit {
   param(
     [string]$Uuid,
     [string]$Message,
-    [string]$Files = $null
+    $Files = $null,
+    [string]$Branch = $null
   )
   
-  # Преобразуем строку JSON в объект, если она передана
   $filesArray = @()
   if ($Files) {
     try {
       if ($Files -is [string]) {
-        $filesArray = $Files | ConvertFrom-Json
-      } else {
+        $filesArray = @($Files | ConvertFrom-Json)
+      } elseif ($Files -is [array]) {
         $filesArray = $Files
+      } else {
+        $filesArray = @($Files)
       }
     }
     catch {
@@ -266,17 +268,17 @@ function Invoke-ApiCreateCommit {
     }
   }
   
-  # Подготавливаем тело запроса
   $bodyObj = @{
     message = $Message
     files = $filesArray
   }
+  if ($Branch) {
+    $bodyObj["branch_name"] = $Branch
+  }
   
   $body = $bodyObj | ConvertTo-Json -Depth 10
   
-  # Вызываем API
   $response = Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/$Uuid/commits/create/" -Body $body
-  
   return $response
 }
 
@@ -419,7 +421,7 @@ function Import-FromSource {
 }
 
 # ============================================================================
-# Функции для работы с содержимым проекта и коммитами
+# Функции для работы с содержимым проекта
 # ============================================================================
 
 # Получить содержимое проекта (из API или backup.json)
@@ -466,152 +468,6 @@ function Get-ProjectContent {
   return @{
     source = "empty"
     structure = @()
-  }
-}
-
-# Создать структуру файла/директории для backup.json
-function Create-FileStructure {
-  param(
-    [string]$Path,
-    [bool]$IsDirectory,
-    [string]$ContentHash = $null,
-    [string]$OldPath = $null
-  )
-  
-  $structure = @{
-    name = Split-Path $Path -Leaf
-    path = $Path
-    is_directory = $IsDirectory
-  }
-  
-  if ($ContentHash) {
-    $structure.hash = $ContentHash
-  }
-  
-  if ($OldPath) {
-    $structure.old_path = $OldPath
-  }
-  
-  return $structure
-}
-
-# Получить автора коммита
-function Get-CommitAuthor {
-  # 1. Пробуем получить через API
-  try {
-    $apiResponse = Invoke-ApiRequest -Method "GET" -Endpoint "/user/current/"
-    if ($apiResponse) {
-      $userData = $apiResponse | ConvertFrom-Json
-      if ($userData.username) {
-        return $userData.username
-      }
-    }
-  }
-  catch {
-    Write-Host "[DEBUG] Не удалось получить пользователя через API: $_" -ForegroundColor Gray
-  }
-  
-  # 2. Пробуем получить из переменных окружения (Windows)
-  if ($env:USERNAME) {
-    return $env:USERNAME
-  }
-  elseif ($env:USER) {
-    return $env:USER
-  }
-  
-  # 3. Пробуем получить из системы через .NET
-  try {
-    $userName = [System.Environment]::UserName
-    if ($userName) {
-      return $userName
-    }
-  }
-  catch {
-    Write-Host "[DEBUG] Не удалось получить имя пользователя через .NET: $_" -ForegroundColor Gray
-  }
-  
-  # 4. Пробуем получить через WMI (Windows Management Instrumentation)
-  try {
-    $userName = (Get-WmiObject -Class Win32_ComputerSystem).UserName
-    if ($userName) {
-      # Извлекаем только имя пользователя из формата "DOMAIN\username"
-      $userName = $userName.Split('\')[-1]
-      return $userName
-    }
-  }
-  catch {
-    Write-Host "[DEBUG] Не удалось получить имя пользователя через WMI: $_" -ForegroundColor Gray
-  }
-  
-  # 5. Возвращаем Unknown
-  Write-Host "[WARNING] Не удалось определить имя пользователя, используется 'Unknown'" -ForegroundColor Yellow
-  return "Unknown"
-}
-
-# Определить тип коммита на основе изменений
-function Get-CommitType {
-  param(
-    [array]$Files,
-    [string]$Message
-  )
-  
-  # Проверяем, указан ли тип в сообщении
-  $commitTypes = @("feat", "fix", "docs", "style", "refactor", "test", "chore", "perf", "ci", "build", "revert")
-  
-  if ($Message -match '^(\w+):') {
-    $type = $Matches[1]
-    if ($commitTypes -contains $type) {
-      return $type
-    }
-  }
-  
-  # Автоматическое определение типа на основе изменений
-  $hasBuildFiles = $false
-  $hasSourceFiles = $false
-  $hasDocsFiles = $false
-  $hasStyleFiles = $false
-  
-  foreach ($file in $Files) {
-    $path = $file.path.ToLower()
-    
-    # Проверяем файлы сборки
-    if ($path -match '(package\.json|pom\.xml|build\.gradle|build\.xml|cmakelists\.txt|makefile|dockerfile|\.yml$|\.yaml$|\.json$|\.config$|\.ini$)') {
-      $hasBuildFiles = $true
-    }
-    
-    # Проверяем исходные файлы (новый функционал)
-    if ($path -match '(\.py$|\.js$|\.ts$|\.java$|\.cpp$|\.cs$|\.php$|\.rb$|\.go$)') {
-      if ($file.action -eq "created") {
-        $hasSourceFiles = $true
-      }
-    }
-    
-    # Проверяем документацию
-    if ($path -match '(readme\.md|readme\.txt|\.md$|\.rst$|docs?\/)') {
-      $hasDocsFiles = $true
-    }
-    
-    # Проверяем стили
-    if ($path -match '(\.css$|\.scss$|\.less$|\.sass$|\.styl$)') {
-      $hasStyleFiles = $true
-    }
-  }
-  
-  # Определяем тип по приоритету
-  if ($hasBuildFiles) {
-    return "build"
-  }
-  elseif ($hasSourceFiles) {
-    return "feat"
-  }
-  elseif ($hasDocsFiles) {
-    return "docs"
-  }
-  elseif ($hasStyleFiles) {
-    return "style"
-  }
-  else {
-    return "chore"
   }
 }
 

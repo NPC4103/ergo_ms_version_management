@@ -125,30 +125,6 @@ except:
 # Функции для работы с хэшированием и содержимым файлов
 # ============================================================================
 
-# Получить MD5 хэш содержимого файла
-get_file_content_hash() {
-  local file_path="$1"
-  
-  if [[ ! -f "$file_path" ]]; then
-    return 1
-  fi
-  
-  if command -v md5sum >/dev/null 2>&1; then
-    md5sum < "$file_path" | cut -d' ' -f1
-  elif command -v md5 >/dev/null 2>&1; then
-    md5 -q "$file_path"
-  elif command -v python3 >/dev/null 2>&1; then
-    python3 -c "
-import hashlib
-with open('$file_path', 'rb') as f:
-    print(hashlib.md5(f.read()).hexdigest())
-"
-  else
-    echo "[ERROR] Не найдена утилита для вычисления MD5 (md5sum, md5 или python3)" >&2
-    return 1
-  fi
-}
-
 # Получить тип изменения файла
 get_file_change_type() {
   local file_path="$1"
