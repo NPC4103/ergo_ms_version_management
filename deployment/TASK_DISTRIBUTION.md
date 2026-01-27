@@ -263,6 +263,26 @@ export API_PORT="8000"
 }
 ```
 
+### Структура бэкапа после `push`
+```json
+{
+    "timestamp": "2024-01-15T12:00:00Z",
+    "structure": [
+        {
+            "name": "file.txt",
+            "path": "path/to/file.txt",
+            "is_directory": false,
+            "hash": "md5hash1234567890"
+        },
+        {
+            "name": "folder",
+            "path": "path/to/folder",
+            "is_directory": true
+        }
+    ]
+}
+```
+
 ```
 
 ### Формат данных для API запросов

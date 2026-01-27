@@ -136,155 +136,239 @@ function Invoke-Clone {
 # ============================================================================
 function Invoke-Add {
   param([string[]]$Files)
-
-  # 1. Определить корень репозитория из пути
+  
+  # 1. Определить корень репозитория
   $repoRoot = Find-LocalRepositoryRoot
-  Write-Host "[DEBUG] RepoRoot: $repoRoot" -ForegroundColor Gray
   if (-not $repoRoot) {
     Write-Host "[ERROR] Не удалось определить корень репозитория." -ForegroundColor Red
     exit 1
   }
-
+  
   # 2. Получить UUID репозитория
   $uuid = Get-CurrentRepositoryUuid -LocalPath $repoRoot
-  Write-Host "[DEBUG] UUID: $uuid" -ForegroundColor Gray
   if (-not $uuid) {
     Write-Host "[ERROR] Не удалось определить UUID репозитория." -ForegroundColor Red
-    Write-Host "[INFO] Убедитесь, что репозиторий был клонирован или создан через команду clone/create." -ForegroundColor Yellow
     exit 1
   }
-
-  # 3. Если аргументы не переданы, добавить все файлы в репозитории
+  
+  # 3. Получить предыдущее состояние проекта
+  $previousState = Get-ProjectContent -RepoUuid $uuid -LocalPath $repoRoot
+  
+  # 4. Загрузить правила игнорирования
+  $ignorePatterns = @()
+  $ergovcsIgnorePath = Join-Path $repoRoot ".ergovcsignore"
+  if (Test-Path $ergovcsIgnorePath) {
+    $ignorePatterns = Get-Content $ergovcsIgnorePath | Where-Object { 
+      -not [string]::IsNullOrWhiteSpace($_) -and -not $_.StartsWith("#")
+    } | ForEach-Object { $_.Trim() }
+  }
+  
+  $ignorePatterns += ".*"
+  $ignorePatterns += "*/.*"
+  $ignorePatterns += ".venv"
+  
+  # 5. Если аргументы не переданы, сканируем всю директорию
   if ($Files.Count -eq 0) {
-    Write-Host "[INFO] Аргументы не указаны. Добавляю все файлы в репозитории..." -ForegroundColor Cyan
-    $Files = Get-ChildItem -Path $repoRoot -File -Recurse -Force |
-             Where-Object { $_.FullName -notlike "*\.ergovcs\*" } |
-             ForEach-Object { 
-               $relativePath = [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName).Replace('\', '/')
-               $relativePath
-             }
+    Write-Host "[INFO] Сканирую все файлы и директории..." -ForegroundColor Cyan
+    
+    $Files = Get-AllItems -Path $repoRoot -RepoRoot $repoRoot -IgnorePatterns $ignorePatterns
     
     if ($Files.Count -eq 0) {
       Write-Host "[INFO] Нет файлов для добавления." -ForegroundColor Yellow
       exit 0
     }
     
-    Write-Host "[DEBUG] Всего найдено файлов: $($Files.Count)" -ForegroundColor Gray
+    Write-Host "[INFO] Найдено элементов: $($Files.Count)" -ForegroundColor Gray
   }
-
-  # 4. Создать директорию .ergovcs, если она не существует
+  
+  # 6. Создать директорию .ergovcs
   $ergovcsPath = Join-Path $repoRoot ".ergovcs"
   if (-not (Test-Path $ergovcsPath)) {
     New-Item -ItemType Directory -Path $ergovcsPath -Force | Out-Null
-    Write-Host "[INFO] Создана директория .ergovcs" -ForegroundColor Cyan
   }
-
-  # 5. Прочитать текущий staging area или создать новый
+  
+  # 7. Прочитать текущий staging area
   $stagingFile = Join-Path $ergovcsPath "staging.json"
   $staging = @{
     repository_uuid = $uuid
     files = [System.Collections.ArrayList]@()
-    pending_commit = $null
   }
-
-  # 6. Обработать каждый файл
-  $hasErrors = $false
-  $addedFiles = @()
   
-  foreach ($file in $Files) {
-    # Пропустить пустые аргументы
-    if ([string]::IsNullOrWhiteSpace($file)) {
-      Write-Host "[WARNING] Пропущен пустой аргумент" -ForegroundColor Yellow
-      continue
-    }
-    
-    # Определить полный путь к файлу
-    $fullPath = if ([System.IO.Path]::IsPathRooted($file)) {
-      $file
-    } else {
-      Join-Path (Get-Location).Path $file
-    }
-    
-    # Проверить существование файла
-    if (-not (Test-Path $fullPath)) {
-      Write-Host "[ERROR] Файл не найден: $file" -ForegroundColor Red
-      $hasErrors = $true
-      continue
-    }
-    
-    Write-Host "[DEBUG] Original: $file | Full: $fullPath" -ForegroundColor Gray
-    
-    # Получить относительный путь от корня репозитория
-    $relativePath = [System.IO.Path]::GetRelativePath($repoRoot, $fullPath).Replace('\', '/')
-    Write-Host "[DEBUG] RelativePath: $relativePath"
-
-    # Пропустить файлы в директории .ergovcs
-    if ($relativePath -like '.ergovcs/*' -or $relativePath -eq '.ergovcs') {
-      Write-Host "[INFO] Пропущен системный файл: $relativePath" -ForegroundColor Gray
-      continue
-    }
-
-    # Прочитать содержимое файла
+  if (Test-Path $stagingFile) {
     try {
-      $fileContent = Get-Content $fullPath -Raw -Encoding UTF8
+      $existingStaging = Get-Content $stagingFile -Raw -Encoding UTF8 | ConvertFrom-Json
+      $staging.repository_uuid = $existingStaging.repository_uuid
+      if ($existingStaging.files) {
+        $staging.files = [System.Collections.ArrayList]@($existingStaging.files)
+      }
     }
     catch {
-      Write-Host "[ERROR] Не удалось прочитать файл: $file - $_" -ForegroundColor Red
-      $hasErrors = $true
+      Write-Host "[WARNING] Не удалось прочитать существующий staging area." -ForegroundColor Yellow
+    }
+  }
+  
+  # 8. Обработать каждый файл/директорию
+  $addedItems = @()
+  $ignoredItems = @()
+  $errors = @()
+  
+  foreach ($item in $Files) {
+    if ([string]::IsNullOrWhiteSpace($item)) {
       continue
     }
     
-    # Определить действие файла
-    $action = Get-FileAction -FilePath $relativePath -LocalPath $repoRoot
+    # Определяем полный путь
+    $fullPath = if ([System.IO.Path]::IsPathRooted($item)) {
+      $item
+    } else {
+      Join-Path (Get-Location).Path $item
+    }
     
-    # Проверить, не добавлен ли файл уже в staging
-    $fileExists = $false
-    $fileIndex = -1
-
+    # Получаем относительный путь
+    try {
+      $relativePath = [System.IO.Path]::GetRelativePath($repoRoot, $fullPath).Replace('\', '/')
+    }
+    catch {
+      Write-Host "[ERROR] Не удалось определить относительный путь: $item" -ForegroundColor Red
+      $errors += $item
+      continue
+    }
+    
+    # Проверяем игнорирование
+    if (Test-Ignored -FilePath $relativePath -IgnorePatterns $ignorePatterns) {
+      $ignoredItems += $relativePath
+      continue
+    }
+    
+    # Проверяем существование
+    $exists = Test-Path $fullPath
+    $isDirectory = $exists -and (Get-Item $fullPath -ErrorAction SilentlyContinue).PSIsContainer
+    
+    # Определяем тип изменения
+    $action = Get-FileChangeType -FilePath $fullPath -LocalPath $repoRoot -PreviousState $previousState -IsDirectory $isDirectory
+    
+    if ($action -eq "unchanged") {
+      continue
+    }
+    
+    # Проверяем, не добавлен ли уже в staging
+    $itemIndex = -1
     for ($j = 0; $j -lt $staging.files.Count; $j++) {
       if ($staging.files[$j].path -eq $relativePath) {
-        $fileExists = $true
-        $fileIndex = $j
+        $itemIndex = $j
         break
       }
     }
     
-    if ($fileExists) {
-      # Обновляем существующий файл
-      $staging.files[$fileIndex].action = $action
-      $staging.files[$fileIndex].content = $fileContent
-      Write-Host "[INFO] Файл обновлен в staging area: $relativePath" -ForegroundColor Cyan
-    } else {
-      # Добавляем новый файл
-      $fileEntry = [ordered]@{
-        path = $relativePath
-        action = $action
-        content = $fileContent
-      }
-      $null = $staging.files.Add($fileEntry)
-      Write-Host "[OK] Файл добавлен в staging area: $relativePath" -ForegroundColor Green
-      $addedFiles += $relativePath
+    # Создаем запись
+    $itemEntry = [ordered]@{
+      path = $relativePath
+      action = $action
+      is_directory = $isDirectory
+      timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
     }
+    
+    # Добавляем дополнительные данные в зависимости от типа изменения
+    switch ($action) {
+      "created" {
+        if (-not $isDirectory -and $exists) {
+          try {
+            $content = Get-Content $fullPath -Raw -Encoding UTF8
+            $itemEntry.content = $content
+            $itemEntry.hash = Get-FileContentHash -FilePath $fullPath
+          }
+          catch {
+            Write-Host "[WARNING] Не удалось прочитать содержимое файла: $relativePath" -ForegroundColor Yellow
+          }
+        }
+      }
+      "updated" {
+        if (-not $isDirectory -and $exists) {
+          try {
+            $content = Get-Content $fullPath -Raw -Encoding UTF8
+            $itemEntry.content = $content
+            $itemEntry.hash = Get-FileContentHash -FilePath $fullPath
+            
+            # Добавляем старый хеш, если есть
+            $previousEntry = $previousState.structure | Where-Object { $_.path -eq $relativePath } | Select-Object -First 1
+            if ($previousEntry -and $previousEntry.hash) {
+              $itemEntry.old_hash = $previousEntry.hash
+            }
+          }
+          catch {
+            Write-Host "[WARNING] Не удалось прочитать содержимое файла: $relativePath" -ForegroundColor Yellow
+          }
+        }
+      }
+      "renamed" {
+        # Ищем старый путь в предыдущем состоянии
+        $previousEntry = $previousState.structure | Where-Object { 
+          $_.path -ne $relativePath -and ($_.old_path -eq $relativePath -or $_.path -eq $relativePath)
+        } | Select-Object -First 1
+        
+        if ($previousEntry) {
+          $itemEntry.old_path = $previousEntry.path
+          $itemEntry.hash = $previousEntry.hash
+        }
+      }
+      "deleted" {
+        # Для удаленных файлов получаем информацию из предыдущего состояния
+        $previousEntry = $previousState.structure | Where-Object { $_.path -eq $relativePath } | Select-Object -First 1
+        if ($previousEntry) {
+          $itemEntry.is_directory = $previousEntry.is_directory
+          $itemEntry.hash = $previousEntry.hash
+        }
+      }
+    }
+    
+    # Обновляем или добавляем запись
+    if ($itemIndex -ge 0) {
+      $staging.files[$itemIndex] = $itemEntry
+    } else {
+      $null = $staging.files.Add($itemEntry)
+    }
+    
+    $addedItems += @{
+      path = $relativePath
+      action = $action
+      is_directory = $isDirectory
+    }
+    
+    Write-Host "[OK] Добавлено: $relativePath ($action)" -ForegroundColor Green
   }
-
-  # 7. Сохранить staging area
+  
+  # 9. Сохранить staging area
   try {
     $jsonContent = $staging | ConvertTo-Json -Depth 10
     Set-Content -Path $stagingFile -Value $jsonContent -Encoding UTF8 -Force
-    Write-Host "[INFO] Staging area сохранен: $stagingFile" -ForegroundColor Cyan
     
-    if ($addedFiles.Count -gt 0) {
-      Write-Host "[OK] Успешно добавлено файлов: $($addedFiles.Count)" -ForegroundColor Green
-      foreach ($addedFile in $addedFiles) {
-        Write-Host "  - $addedFile" -ForegroundColor Gray
+    # Выводим статистику
+    if ($addedItems.Count -gt 0) {
+      Write-Host "`n[OK] Статистика добавленных изменений:" -ForegroundColor Green
+      
+      $actionGroups = $addedItems | Group-Object -Property action
+      foreach ($group in $actionGroups) {
+        $count = $group.Count
+        $dirCount = ($group.Group | Where-Object { $_.is_directory }).Count
+        $fileCount = $count - $dirCount
+        
+        Write-Host "  $($group.Name): $count" -ForegroundColor Cyan
+        if ($fileCount -gt 0) {
+          Write-Host "    Файлов: $fileCount" -ForegroundColor Gray
+        }
+        if ($dirCount -gt 0) {
+          Write-Host "    Директорий: $dirCount" -ForegroundColor Gray
+        }
       }
     }
     
-    if ($hasErrors) {
-      Write-Host "[WARNING] Некоторые файлы не были добавлены из-за ошибок" -ForegroundColor Yellow
+    if ($ignoredItems.Count -gt 0) {
+      Write-Host "`n[INFO] Проигнорировано: $($ignoredItems.Count)" -ForegroundColor Yellow
+    }
+    
+    if ($errors.Count -gt 0) {
+      Write-Host "`n[ERROR] Ошибки при обработке: $($errors.Count)" -ForegroundColor Red
       exit 1
-    } else {
-      exit 0
     }
   }
   catch {
@@ -295,117 +379,245 @@ function Invoke-Add {
 
 # ============================================================================
 # Создание коммита
-# Команда: ergovcs commit -m "Сообщение"
-# Создаёт коммит с изменениями в папке media/version_management/<UUID>/
+# Команда: ergovcs commit -m "Сообщение" [--change] [--save-message] [--save-files]
+# Создаёт коммит с изменениями
 # ============================================================================
 function Invoke-Commit {
   param([string[]]$MessageArg)
   
-  # 1. Получить сообщение коммита из аргумента -m
+  # 1. Парсинг аргументов
   $message = $null
+  $isChange = $false
+  $saveMessageOnly = $false
+  $saveFilesOnly = $false
   
   for ($i = 0; $i -lt $MessageArg.Count; $i++) {
-    switch ($MessageArg[$i]) {
-      "-m" { 
-        $i++
-        if ($i -lt $MessageArg.Count) {
-          $message = $MessageArg[$i]
-        }
+      $arg = $MessageArg[$i]
+      switch -Wildcard ($arg) {
+          "-m" { 
+              $i++
+              if ($i -lt $MessageArg.Count) {
+                  $message = $MessageArg[$i]
+              }
+          }
+          "--message" { 
+              $i++
+              if ($i -lt $MessageArg.Count) {
+                  $message = $MessageArg[$i]
+              }
+          }
+          "-c" { $isChange = $true }
+          "--change" { $isChange = $true }
+          "-sm" { $saveMessageOnly = $true }
+          "--save-message" { $saveMessageOnly = $true }
+          "-sf" { $saveFilesOnly = $true }
+          "--save-files" { $saveFilesOnly = $true }
+          default {
+              if (-not $message -and -not $arg.StartsWith("-")) {
+                  $message = $arg
+              }
+          }
       }
-      "--message" { 
-        $i++
-        if ($i -lt $MessageArg.Count) {
-          $message = $MessageArg[$i]
-        }
-      }
-      default {
-        # Игнорируем неизвестные параметры
-      }
-    }
   }
-
-  if ([string]::IsNullOrWhiteSpace($message)) {
-    Write-Host "[ERROR] Необходимо указать сообщение коммита" -ForegroundColor Red
-    Write-Host "Использование: ergovcs commit -m `"Сообщение`"" -ForegroundColor Yellow
-    exit 1
+  
+  # Валидация опций
+  if ($saveMessageOnly -and $saveFilesOnly) {
+      Write-Host "[ERROR] Опции --save-message и --save-files не могут использоваться вместе." -ForegroundColor Red
+      exit 1
   }
-
-  # 2. Получить UUID текущего репозитория
-  $uuid = Get-CurrentRepositoryUuid
-  if (-not $uuid) {
-    Write-Host "[ERROR] Не удалось определить UUID репозитория." -ForegroundColor Red
-    Write-Host "[INFO] Убедитесь, что репозиторий был клонирован или создан через команду clone/create." -ForegroundColor Yellow
-    exit 1
+  
+  if (($saveMessageOnly -or $saveFilesOnly) -and -not $isChange) {
+      Write-Host "[ERROR] Опции --save-message и --save-files требуют опции --change." -ForegroundColor Red
+      exit 1
   }
-
-  # 3. Определить корень репозитория
+  
+  if (-not $message -and -not $saveFilesOnly) {
+      Write-Host "[ERROR] Необходимо указать сообщение коммита" -ForegroundColor Red
+      Write-Host "Использование: ergovcs commit -m `"Сообщение`" [--change] [--save-message] [--save-files]" -ForegroundColor Yellow
+      exit 1
+  }
+  
+  # 2. Определить корень репозитория
   $repoRoot = Find-LocalRepositoryRoot
   if (-not $repoRoot) {
-    Write-Host "[ERROR] Не удалось найти репозиторий. Убедитесь, что вы находитесь в директории репозитория." -ForegroundColor Red
-    exit 1
+      Write-Host "[ERROR] Не удалось найти репозиторий." -ForegroundColor Red
+      exit 1
   }
-
+  
+  # 3. Получить UUID текущего репозитория
+  $uuid = Get-CurrentRepositoryUuid -LocalPath $repoRoot
+  if (-not $uuid) {
+      Write-Host "[ERROR] Не удалось определить UUID репозитория." -ForegroundColor Red
+      exit 1
+  }
+  
   # 4. Прочитать staging area
   $stagingFile = Join-Path $repoRoot ".ergovcs" "staging.json"
   if (-not (Test-Path $stagingFile)) {
-    Write-Host "[ERROR] Staging area не найден. Используйте команду 'add' для добавления файлов." -ForegroundColor Red
-    exit 1
+      Write-Host "[ERROR] Staging area не найден." -ForegroundColor Red
+      exit 1
   }
-
+  
   try {
-    $stagingJson = Get-Content $stagingFile -Raw -Encoding UTF8
-    $staging = $stagingJson | ConvertFrom-Json -ErrorAction Stop
+      $stagingJson = Get-Content $stagingFile -Raw -Encoding UTF8
+      $staging = $stagingJson | ConvertFrom-Json -ErrorAction Stop
   }
   catch {
-    Write-Host "[ERROR] Не удалось прочитать staging area: $_" -ForegroundColor Red
-    exit 1
+      Write-Host "[ERROR] Не удалось прочитать staging area: $_" -ForegroundColor Red
+      exit 1
   }
-
+  
   # 5. Проверить, есть ли файлы в staging area
   if (-not $staging.files -or $staging.files.Count -eq 0) {
-    Write-Host "[ERROR] Нет файлов в staging area. Используйте команду 'add' для добавления файлов." -ForegroundColor Red
-    exit 1
+      Write-Host "[ERROR] Нет файлов в staging area." -ForegroundColor Red
+      exit 1
   }
-
-  # 6. Проверить, есть ли уже pending_commit
-  # Если есть, обновляем его и добавляем новые файлы
-  if ($staging.pending_commit) {
-    Write-Host "[INFO] Обнаружен незавершенный коммит. Файлы будут добавлены к существующему коммиту." -ForegroundColor Yellow
-    
-    # Обновляем сообщение коммита
-    $staging.pending_commit.message = $message
-    $staging.pending_commit.created_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-    
-    # Сохраняем обновленный staging area
-    $jsonContent = $staging | ConvertTo-Json -Depth 10
-    Set-Content -Path $stagingFile -Value $jsonContent -Encoding UTF8 -Force
-    
-    Write-Host "[OK] Коммит обновлен. Сообщение: $message" -ForegroundColor Green
-    Write-Host "[INFO] Всего файлов в коммите: $($staging.files.Count)" -ForegroundColor Cyan
-    Write-Host "[INFO] Используйте команду 'push' для отправки коммита на сервер." -ForegroundColor Yellow
-    return
+  
+  # 6. Получить автора коммита
+  $author = Get-CommitAuthor
+  Write-Host "[INFO] Автор коммита: $author" -ForegroundColor Cyan
+  
+  # 7. Определить тип коммита
+  $commitType = Get-CommitType -Files $staging.files -Message $message
+  
+  # Добавляем тип к сообщению, если его там нет
+  $commitTypes = @("feat", "fix", "docs", "style", "refactor", "test", "chore", "perf", "ci", "build", "revert")
+  $hasType = $false
+  
+  if ($message -match '^(\w+):') {
+      $typeInMessage = $Matches[1]
+      if ($commitTypes -contains $typeInMessage) {
+          $hasType = true
+      }
   }
-
-  # 7. Создаем новый pending_commit
-  $staging.pending_commit = @{
-    message = $message
-    created_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-    author = $env:USERNAME
+  
+  if (-not $hasType) {
+      $message = "$commitType`: $message"
+      Write-Host "[INFO] Автоматически определен тип коммита: $commitType" -ForegroundColor Cyan
   }
-
-  # 8. Сохраняем staging area с pending_commit
+  
+  # 8. Классификация изменений
+  $actionStats = @{
+      created = @{ count = 0; files = 0; dirs = 0 }
+      updated = @{ count = 0; files = 0; dirs = 0 }
+      deleted = @{ count = 0; files = 0; dirs = 0 }
+      renamed = @{ count = 0; files = 0; dirs = 0 }
+  }
+  
+  foreach ($file in $staging.files) {
+      $action = $file.action
+      if ($actionStats.ContainsKey($action)) {
+          $actionStats[$action].count++
+          if ($file.is_directory) {
+              $actionStats[$action].dirs++
+          } else {
+              $actionStats[$action].files++
+          }
+      }
+  }
+  
+  $changeSummary = @()
+  foreach ($action in $actionStats.Keys) {
+      if ($actionStats[$action].count -gt 0) {
+          $summary = "$($actionStats[$action].count) $action"
+          if ($actionStats[$action].files -gt 0) {
+              $summary += " ($($actionStats[$action].files) файлов"
+              if ($actionStats[$action].dirs -gt 0) {
+                  $summary += ", $($actionStats[$action].dirs) директорий"
+              }
+              $summary += ")"
+          } elseif ($actionStats[$action].dirs -gt 0) {
+              $summary += " ($($actionStats[$action].dirs) директорий)"
+          }
+          $changeSummary += $summary
+      }
+  }
+  
+  $changeSummaryStr = if ($changeSummary.Count -gt 0) { ($changeSummary -join ", ") } else { "нет изменений" }
+  
+  # 9. Обработка файла commit.json
+  $commitFile = Join-Path $repoRoot ".ergovcs" "commit.json"
+  $existingCommit = $null
+  
+  if (Test-Path $commitFile) {
+      try {
+          $existingCommitJson = Get-Content $commitFile -Raw -Encoding UTF8
+          $existingCommit = $existingCommitJson | ConvertFrom-Json -ErrorAction Stop
+      }
+      catch {
+          Write-Host "[WARNING] Не удалось прочитать существующий коммит." -ForegroundColor Yellow
+          $existingCommit = $null
+      }
+  }
+  
+  # 10. Создание/обновление коммита
+  $commit = @{
+      repository_uuid = $uuid
+      message = $message
+      author = $author
+      type = $commitType
+      created_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+      files = @()
+      change_summary = $changeSummaryStr
+      stats = $actionStats
+  }
+  
+  if ($isChange -and $existingCommit) {
+      Write-Host "[INFO] Обновление существующего коммита..." -ForegroundColor Yellow
+      
+      # Сохраняем исходные данные
+      $commit.created_at = $existingCommit.created_at
+      
+      if ($saveMessageOnly) {
+          $commit.message = $message
+          $commit.type = $commitType
+          $commit.files = $existingCommit.files
+          Write-Host "[INFO] Обновлено только сообщение коммита." -ForegroundColor Cyan
+      }
+      elseif ($saveFilesOnly) {
+          $commit.message = $existingCommit.message
+          $commit.type = $existingCommit.type
+          $commit.files = $staging.files
+          Write-Host "[INFO] Обновлены только файлы в коммите." -ForegroundColor Cyan
+      }
+      else {
+          $commit.message = $message
+          $commit.type = $commitType
+          $commit.files = $staging.files
+          Write-Host "[INFO] Коммит полностью перезаписан." -ForegroundColor Cyan
+      }
+  }
+  else {
+      $commit.files = $staging.files
+  }
+  
+  # 11. Сохранить коммит в файл commit.json
   try {
-    $jsonContent = $staging | ConvertTo-Json -Depth 10
-    Set-Content -Path $stagingFile -Value $jsonContent -Encoding UTF8 -Force
-    
-    Write-Host "[OK] Коммит создан локально." -ForegroundColor Green
-    Write-Host "Сообщение: $message" -ForegroundColor Cyan
-    Write-Host "Файлов: $($staging.files.Count)" -ForegroundColor Cyan
-    Write-Host "[INFO] Используйте команду 'push' для отправки коммита на сервер." -ForegroundColor Yellow
+      $jsonContent = $commit | ConvertTo-Json -Depth 10
+      Set-Content -Path $commitFile -Value $jsonContent -Encoding UTF8 -Force
+      
+      Write-Host "`n[OK] Коммит создан локально." -ForegroundColor Green
+      Write-Host "Тип: $($commit.type)" -ForegroundColor Cyan
+      Write-Host "Сообщение: $($commit.message)" -ForegroundColor Cyan
+      Write-Host "Автор: $($commit.author)" -ForegroundColor Cyan
+      Write-Host "Изменения: $($commit.change_summary)" -ForegroundColor Cyan
+      
+      # 12. Очистить staging area (только если не сохраняем только сообщение)
+      if (-not $saveMessageOnly) {
+          $emptyStaging = @{
+              repository_uuid = $uuid
+              files = @()
+          }
+          $emptyStagingJson = $emptyStaging | ConvertTo-Json -Depth 10
+          Set-Content -Path $stagingFile -Value $emptyStagingJson -Encoding UTF8 -Force
+          Write-Host "[INFO] Staging area очищен." -ForegroundColor Cyan
+      }
+      
+      Write-Host "[INFO] Используйте команду 'push' для отправки коммита на сервер." -ForegroundColor Yellow
   }
   catch {
-    Write-Host "[ERROR] Не удалось сохранить коммит: $_" -ForegroundColor Red
-    exit 1
+      Write-Host "[ERROR] Не удалось сохранить коммит: $_" -ForegroundColor Red
+      exit 1
   }
 }
 

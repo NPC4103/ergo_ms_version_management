@@ -16,6 +16,8 @@ import shutil
 import hashlib
 import uuid as uuid_lib
 
+from .smart_merge import smart_merge
+
 from .models import Repository, Branch, Collaborator
 from .serializers import (
     RepositorySerializer,
@@ -26,11 +28,170 @@ from .serializers import (
     SetDefaultBranchSerializer,
     BranchListSerializer,
     CollaboratorSerializer,
-    CollaboratorCreateSerializer
+    CollaboratorCreateSerializer,
+    FileUploadSerializer
 )
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 MEDIA_ROOT = BASE_DIR / 'media'
+
+
+def _build_diff_maps(base_lines, other_lines):
+    """
+    Строит карты отличий base -> other для трёхстороннего слияния.
+    Возвращает:
+      - status: список длиной len(base_lines) с элементами (tag, j_index_or_None)
+      - inserts: словарь {base_index: [строки]}, вставки перед base_index.
+    """
+    matcher = difflib.SequenceMatcher(a=base_lines, b=other_lines)
+    status = [None] * len(base_lines)
+    inserts = {}
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == 'equal':
+            for offset in range(i2 - i1):
+                i = i1 + offset
+                status[i] = ('equal', j1 + offset)
+        elif tag == 'replace':
+            # Часть, которая сопоставляется 1:1
+            overlap = min(i2 - i1, j2 - j1)
+            for offset in range(overlap):
+                i = i1 + offset
+                status[i] = ('replace', j1 + offset)
+            # Лишние строки в base считаются удалёнными
+            for i in range(i1 + overlap, i2):
+                status[i] = ('delete', None)
+            # Лишние строки в other считаются вставками после i2 - 1
+            if j1 + overlap < j2:
+                inserts.setdefault(i2, []).extend(other_lines[j1 + overlap : j2])
+        elif tag == 'delete':
+            for i in range(i1, i2):
+                status[i] = ('delete', None)
+        elif tag == 'insert':
+            inserts.setdefault(i1, []).extend(other_lines[j1:j2])
+
+    # Любые неустановленные статусы трактуем как equal
+    for i in range(len(base_lines)):
+        if status[i] is None:
+            status[i] = ('equal', None)
+
+    return status, inserts
+
+
+def three_way_merge(base_text, local_text, remote_text):
+    """
+    Простой строковый 3‑сторонний merge по строкам, аналогичный git diff3.
+
+    Правила:
+      - Изменено только в LOCAL (относительно BASE) -> берём LOCAL.
+      - Изменено только в REMOTE -> берём REMOTE.
+      - Одинаковые изменения в LOCAL и REMOTE -> берём одно значение.
+      - Разные изменения в LOCAL и REMOTE -> помечаем конфликтом:
+        <<<<<<< LOCAL
+        ...local...
+        =======
+        ...remote...
+        >>>>>>> REMOTE
+    Обрабатывает добавления и удаления строк.
+    Возвращает объединённый текст (str).
+    """
+    base_lines = base_text.splitlines(keepends=True)
+    local_lines = local_text.splitlines(keepends=True)
+    remote_lines = remote_text.splitlines(keepends=True)
+
+    local_status, local_inserts = _build_diff_maps(base_lines, local_lines)
+    remote_status, remote_inserts = _build_diff_maps(base_lines, remote_lines)
+
+    merged_lines = []
+
+    def emit_conflict(local_block, remote_block):
+        # local_block / remote_block - списки строк с разделителями строк
+        merged_lines.append("<<<<<<< LOCAL\n")
+        if local_block:
+            merged_lines.extend(local_block)
+            if not local_block[-1].endswith("\n"):
+                merged_lines[-1] = merged_lines[-1] + "\n"
+        merged_lines.append("=======\n")
+        if remote_block:
+            merged_lines.extend(remote_block)
+            if not remote_block[-1].endswith("\n"):
+                merged_lines[-1] = merged_lines[-1] + "\n"
+        merged_lines.append(">>>>>>> REMOTE\n")
+
+    def handle_inserts(pos):
+        l_ins = local_inserts.get(pos, [])
+        r_ins = remote_inserts.get(pos, [])
+        if not l_ins and not r_ins:
+            return
+        if l_ins and not r_ins:
+            merged_lines.extend(l_ins)
+        elif r_ins and not l_ins:
+            merged_lines.extend(r_ins)
+        else:
+            if l_ins == r_ins:
+                merged_lines.extend(l_ins)
+            else:
+                emit_conflict(l_ins, r_ins)
+
+    # Основной проход по строкам BASE
+    for i in range(len(base_lines) + 1):
+        # Сначала вставки перед позицией i
+        handle_inserts(i)
+
+        if i == len(base_lines):
+            break
+
+        base_line = base_lines[i]
+        l_tag, l_j = local_status[i]
+        r_tag, r_j = remote_status[i]
+
+        # Утилиты для получения строк
+        local_line = None
+        if l_tag != 'delete' and l_j is not None and 0 <= l_j < len(local_lines):
+            local_line = local_lines[l_j]
+
+        remote_line = None
+        if r_tag != 'delete' and r_j is not None and 0 <= r_j < len(remote_lines):
+            remote_line = remote_lines[r_j]
+
+        # Оба варианта совпадают с BASE
+        if l_tag == 'equal' and r_tag == 'equal':
+            merged_lines.append(base_line)
+            continue
+
+        # Изменено только в LOCAL
+        if l_tag != 'equal' and r_tag == 'equal':
+            if l_tag == 'delete':
+                # Удалено только в LOCAL -> удаляем
+                continue
+            if local_line is not None:
+                merged_lines.append(local_line)
+            else:
+                # На всякий случай, если не удалось получить строку
+                merged_lines.append(base_line)
+            continue
+
+        # Изменено только в REMOTE
+        if l_tag == 'equal' and r_tag != 'equal':
+            if r_tag == 'delete':
+                # Удалено только в REMOTE -> удаляем
+                continue
+            if remote_line is not None:
+                merged_lines.append(remote_line)
+            else:
+                merged_lines.append(base_line)
+            continue
+
+        # Изменено и в LOCAL, и в REMOTE
+        local_block = [] if l_tag == 'delete' else ([local_line] if local_line is not None else [])
+        remote_block = [] if r_tag == 'delete' else ([remote_line] if remote_line is not None else [])
+
+        if local_block == remote_block:
+            merged_lines.extend(local_block)
+        else:
+            emit_conflict(local_block, remote_block)
+
+    return "".join(merged_lines)
 
 
 class RepositoryViewSet(viewsets.ModelViewSet):
@@ -43,6 +204,8 @@ class RepositoryViewSet(viewsets.ModelViewSet):
     queryset = Repository.objects.all()
     lookup_field = 'public_id'
     lookup_url_kwarg = 'public_id'
+
+    
 
     def get_queryset(self):
         """Возвращаем только репозитории, доступные текущему пользователю"""
@@ -642,33 +805,173 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                     commits.sort(key=lambda x: x[0], reverse=True)
                     target_dirs.append(commits[0][1])
 
+            # Если передан параметр path, идем в подпапку
+            request_path = request.query_params.get('path', '').strip('/')
+            
             files_map = {}
             for d in target_dirs:
                 if not os.path.exists(d): continue
                 
-                for item in os.listdir(d):
+                # Если запрошен путь, добавляем его к базовой папке
+                search_dir = os.path.join(d, request_path) if request_path else d
+                
+                if not os.path.exists(search_dir) or not os.path.isdir(search_dir):
+                    continue
+                
+                for item in os.listdir(search_dir):
                     if item in ['commit.json', 'pending_commit.json', 'commits', '.repo_info.json', '.git']:
                         continue
                         
-                    item_path = os.path.join(d, item)
+                    item_path = os.path.join(search_dir, item)
                     is_dir = os.path.isdir(item_path)
+                    
+                    # Формируем относительный путь для фронтенда
+                    rel_path = os.path.join(request_path, item).replace('\\', '/')
                     
                     # Добавляем или перезаписываем (приоритет у последнего, т.е. коммита)
                     files_map[item] = {
                         'name': item,
-                        'path': item,
+                        'path': rel_path,
                         'type': 'dir' if is_dir else 'file',
                         'size': os.path.getsize(item_path) if not is_dir else 0,
                         'last_date': datetime.fromtimestamp(os.path.getmtime(item_path)).strftime('%Y-%m-%d %H:%M')
                     }
 
             files_list = list(files_map.values())
-            files_list.sort(key=lambda x: x['name'])
+            files_list.sort(key=lambda x: (x['type'] != 'dir', x['name'])) # Сначала папки
 
             return Response(files_list, status=status.HTTP_200_OK)
 
         except Exception as e:
             print(f"Error getting branch files: {e}")
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['get'], url_path=r'branches/(?P<branch_name>[^/]+)/file/content')
+    def get_file_content(self, request, public_id=None, branch_name=None):
+        """
+        Получить содержимое файла.
+        GET /api/repositories/{id}/branches/{branch_name}/file/content/?path=path/to/file.ext
+        """
+        repository = self.get_object()
+        repo_uuid = str(repository.public_id)
+        file_path_param = request.query_params.get('path', '')
+        
+        if not file_path_param:
+             return Response({'error': 'Parameter "path" is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            base_path = os.path.join(MEDIA_ROOT, 'version_management', repo_uuid)
+            branch_path = os.path.join(base_path, 'branches', branch_name)
+            
+            # Стратегия поиска файла:
+            # 1. Сначала в последнем коммите
+            # 2. Потом в корне ветки
+            
+            target_file_path = None
+            
+            # Поиск в коммитах
+            commits_path = os.path.join(branch_path, 'commits')
+            if os.path.exists(commits_path) and os.path.isdir(commits_path):
+                commits = []
+                for commit_dir in os.listdir(commits_path):
+                    full_path = os.path.join(commits_path, commit_dir)
+                    if os.path.isdir(full_path):
+                        commits.append((os.path.getmtime(full_path), full_path))
+                
+                if commits:
+                    commits.sort(key=lambda x: x[0], reverse=True)
+                    latest_commit_dir = commits[0][1]
+                    candidate = os.path.join(latest_commit_dir, file_path_param)
+                    if os.path.exists(candidate) and os.path.isfile(candidate):
+                        target_file_path = candidate
+            
+            # Если не нашли в коммите, ищем в корне ветки
+            if not target_file_path:
+                candidate = os.path.join(branch_path, file_path_param)
+                if os.path.exists(candidate) and os.path.isfile(candidate):
+                    target_file_path = candidate
+            
+            if not target_file_path or not os.path.exists(target_file_path):
+                return Response({'error': 'File not found'}, status=status.HTTP_404_NOT_FOUND)
+                
+            # Читаем файл
+            # Простая защита от выхода за пределы папки (basic path traversal check)
+            if not os.path.abspath(target_file_path).startswith(os.path.abspath(base_path)):
+                 return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
+
+            with open(target_file_path, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read()
+                
+            return Response({'content': content}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            print(f"Error reading file content: {e}")
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['post'], url_path=r'branches/(?P<branch_name>[^/]+)/file/update')
+    def update_file_content(self, request, public_id=None, branch_name=None):
+        """
+        Обновить содержимое файла (сохранить изменения).
+        POST /api/repositories/{id}/branches/{branch_name}/file/update/
+        Body: { "path": "README.md", "content": "New content" }
+        """
+        repository = self.get_object()
+        repo_uuid = str(repository.public_id)
+        
+        path_param = request.data.get('path')
+        content = request.data.get('content')
+        
+        if not path_param or content is None:
+             return Response({'error': 'Fields "path" and "content" are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            base_path = os.path.join(MEDIA_ROOT, 'version_management', repo_uuid)
+            branch_path = os.path.join(base_path, 'branches', branch_name)
+            
+            # Определяем, куда писать.
+            # Если файл существует в корне (например README.md), пишем туда.
+            # Иначе пишем в папку последнего коммита (для кода).
+            # В идеале нужно делать новый коммит, но пока делаем прямое редактирование (WIP).
+            
+            target_path = os.path.join(branch_path, path_param)
+            
+            # Если файл уже есть в корне ветки -> обновляем его
+            if os.path.exists(target_path):
+                pass
+            else:
+                # Иначе пытаемся найти последний коммит
+                commits_path = os.path.join(branch_path, 'commits')
+                latest_commit_dir = None
+                if os.path.exists(commits_path) and os.path.isdir(commits_path):
+                    commits = []
+                    for commit_dir in os.listdir(commits_path):
+                        full_path = os.path.join(commits_path, commit_dir)
+                        if os.path.isdir(full_path):
+                            commits.append((os.path.getmtime(full_path), full_path))
+                    if commits:
+                        commits.sort(key=lambda x: x[0], reverse=True)
+                        latest_commit_dir = commits[0][1]
+                
+                if latest_commit_dir:
+                    target_path = os.path.join(latest_commit_dir, path_param)
+                else:
+                    # Если коммитов нет, пишем в корень
+                    target_path = os.path.join(branch_path, path_param)
+            
+            # Создаем директории если надо
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            
+            # Защита путей
+            if not os.path.abspath(target_path).startswith(os.path.abspath(base_path)):
+                 return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
+
+            with open(target_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+                
+            return Response({'success': True, 'message': 'File updated'}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            print(f"Error updating file content: {e}")
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=True, methods=['get'], url_path=r'commits/(?P<commit_hash>[^/.]+)')
@@ -1035,6 +1338,19 @@ class RepositoryViewSet(viewsets.ModelViewSet):
             'collaborator': serializer.data
         })
 
+    @action(detail=True, methods=['get'])
+    def branches(self, request, public_id=None):
+        """
+        Получение списка веток репозитория.
+        """
+        repository = self.get_object()
+        branches = repository.branches.all().order_by('-is_default', 'name')
+        
+        # Используем сериализатор для списка веток
+        serializer = BranchListSerializer(branches, many=True)
+        
+        return Response(serializer.data)
+
     @action(detail=True, methods=['get'], url_path='files')
     def get_files(self, request, public_id=None):
 
@@ -1053,6 +1369,60 @@ class RepositoryViewSet(viewsets.ModelViewSet):
             "repository": instance.name,
             "structure": structure
         })
+
+    @action(detail=False, methods=['post'], url_path='smart_merge')
+    def smart_merge_action(self, request):
+        """
+        Smart 3-way merge with heuristics and conflict analysis.
+
+        Body:
+        {
+          "base_text": "...",
+          "local_text": "...",
+          "remote_text": "..."
+        }
+
+        Response:
+        {
+          "merged_text": "...",
+          "conflicts": {...},
+          "quality": {...}
+        }
+        """
+        base_text = request.data.get('base_text', '') or ''
+        local_text = request.data.get('local_text', '') or ''
+        remote_text = request.data.get('remote_text', '') or ''
+
+        result = smart_merge(base_text, local_text, remote_text)
+
+        return Response(result, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], url_path='three_way_merge')
+    def three_way_merge_action(self, request):
+        """
+        API‑endpoint для выполнения трёхстороннего слияния текста.
+
+        Ожидает в теле запроса JSON:
+        {
+          "base_text": "...",
+          "local_text": "...",
+          "remote_text": "..."
+        }
+
+        Возвращает:
+        {
+          "merged_text": "..."
+        }
+        """
+        base_text = request.data.get('base_text', '') or ''
+        local_text = request.data.get('local_text', '') or ''
+        remote_text = request.data.get('remote_text', '') or ''
+
+        merged_text = three_way_merge(base_text, local_text, remote_text)
+
+        return Response({
+            'merged_text': merged_text
+        }, status=status.HTTP_200_OK)
 
 
 class BranchViewSet(viewsets.ModelViewSet):
@@ -1187,6 +1557,7 @@ class BranchViewSet(viewsets.ModelViewSet):
     
     def destroy(self, request, *args, **kwargs):
         """Удаление ветки с проверкой прав"""
+        print(f"--- [DEBUG] Branch destroy called for id: {kwargs.get('pk')} ---")
         branch = self.get_object()
         
         # Проверяем права на изменение репозитория
@@ -1277,6 +1648,43 @@ class BranchViewSet(viewsets.ModelViewSet):
             })
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'], url_path='branches/(?P<branch_name>[^/]+)/files/upload')
+    def upload_file(self, request, public_id=None, branch_name=None):
+        """
+        Загрузка файла в ветку.
+        """
+        repository = self.get_object()
+        
+        # Находим ветку
+        try:
+            branch = repository.branches.get(name=branch_name)
+        except Branch.DoesNotExist:
+            return Response({"error": "Ветка не найдена"}, status=404)
+            
+        serializer = FileUploadSerializer(data=request.data)
+        if serializer.is_valid():
+            uploaded_file = serializer.validated_data['file']
+            rel_path = serializer.validated_data.get('path', '')
+            
+            # Строим путь: media/version_management/{repo_uuid}/branches/{branch_name}/{rel_path}
+            repo_uuid = str(repository.public_id)
+            base_path = os.path.join(MEDIA_ROOT, 'version_management', repo_uuid, 'branches', branch_name)
+            
+            # Ensure target directory exists
+            target_dir = os.path.join(base_path, rel_path)
+            os.makedirs(target_dir, exist_ok=True)
+            
+            file_path = os.path.join(target_dir, uploaded_file.name)
+            
+            # Сохраняем файл
+            with open(file_path, 'wb+') as destination:
+                for chunk in uploaded_file.chunks():
+                    destination.write(chunk)
+            
+            return Response({'success': True, 'message': 'Файл загружен', 'file': uploaded_file.name})
+        
+        return Response(serializer.errors, status=400)
 
     @action(detail=True, methods=['post'])
     def make_default(self, request, pk=None):
@@ -1375,6 +1783,11 @@ class CollaboratorViewSet(viewsets.ModelViewSet):
     queryset = Collaborator.objects.all()
     serializer_class = CollaboratorSerializer
     
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return CollaboratorCreateSerializer
+        return CollaboratorSerializer
+
     def get_queryset(self):
         """Фильтрация коллабораторов по доступным репозиториям"""
         queryset = super().get_queryset()

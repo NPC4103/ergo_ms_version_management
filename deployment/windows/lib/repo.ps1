@@ -415,216 +415,181 @@ function Import-FromSource {
 }
 
 # ============================================================================
-# Функции для работы со staging area
+# Функции для работы с содержимым проекта и коммитами
 # ============================================================================
 
-# Найти корень репозитория (ищет .ergovcs/staging.json или .ergovcs/repos.json вверх по дереву)
-function Find-LocalRepositoryRoot {
-  $current = Get-Location
-  while ($current.Path -ne $current.Drive.Root) {
-    $ergovcsDir = Join-Path $current.Path ".ergovcs"
-    $stagingFile = Join-Path $ergovcsDir "staging.json"
-    $configFile = Join-Path $ergovcsDir "repos.json"
-    
-    if ((Test-Path $stagingFile) -or (Test-Path $configFile)) {
-      return $current.Path
-    }
-    $current = $current.Parent
-  }
-  return $null
-}
-
-# Получить UUID текущего репозитория
-function Get-CurrentRepositoryUuid {
-  param([string[]]$LocalPath)
-
-  if (-not $LocalPath) {
-    Write-Host "[DEBUG] Корень репозитория не найден" -ForegroundColor Gray
-    return $null
-  }
-  
-  Write-Host "[DEBUG] Корень репозитория: $LocalPath" -ForegroundColor Gray
-  
-  # Путь к локальному файлу repos.json в .ergovcs директории
-  $localReposFile = Join-Path $LocalPath ".ergovcs" "repos.json"
-  Write-Host "[DEBUG] Ищем локальный файл: $localReposFile" -ForegroundColor Gray
-  
-  # Пробуем сначала прочитать из локального .ergovcs/repos.json
-  if (Test-Path $localReposFile) {
-    Write-Host "[DEBUG] Локальный файл repos.json найден" -ForegroundColor Gray
-    try {
-      $reposJson = Get-Content $localReposFile -Raw -Encoding UTF8
-      $repos = $reposJson | ConvertFrom-Json -ErrorAction Stop
-      
-      Write-Host "[DEBUG] Прочитано репозиториев: $($repos.repositories.PSObject.Properties.Count)" -ForegroundColor Gray
-      
-      # Ищем репозиторий с local_path, который совпадает с текущим путем
-      foreach ($property in $repos.repositories.PSObject.Properties) {
-        $uuid = $property.Name
-        $repo = $property.Value
-        
-        Write-Host "[DEBUG] Проверяем репозиторий: $uuid" -ForegroundColor Gray
-        Write-Host "[DEBUG]  local_path: $($repo.local_path)" -ForegroundColor Gray
-        Write-Host "[DEBUG]  current: $LocalPath" -ForegroundColor Gray
-        
-        # Сравниваем пути (учитываем возможные различия в формате)
-        if ($repo.local_path -and (
-            $repo.local_path -eq $LocalPath -or 
-            (Resolve-Path $repo.local_path -ErrorAction SilentlyContinue) -eq (Resolve-Path $LocalPath -ErrorAction SilentlyContinue))) {
-          Write-Host "[DEBUG] Найден UUID: $uuid" -ForegroundColor Gray
-          return $uuid
-        }
-      }
-    }
-    catch {
-      Write-Host "[ERROR] Не удалось прочитать или распарсить локальный repos.json: $_" -ForegroundColor Red
-    }
-  } else {
-    Write-Host "[DEBUG] Локальный файл repos.json не найден" -ForegroundColor Gray
-  }
-  
-  # Фолбэк: проверяем staging.json (если существует)
-  $stagingFile = Join-Path $LocalPath ".ergovcs\staging.json"
-  if (Test-Path $stagingFile) {
-    Write-Host "[DEBUG] Пробуем прочитать staging.json" -ForegroundColor Gray
-    try {
-      $stagingJson = Get-Content $stagingFile -Raw -Encoding UTF8
-      $staging = $stagingJson | ConvertFrom-Json -ErrorAction Stop
-      if ($staging.repository_uuid) {
-        Write-Host "[DEBUG] Найден UUID из staging: $($staging.repository_uuid)" -ForegroundColor Gray
-        return $staging.repository_uuid
-      }
-    }
-    catch {
-      Write-Host "[ERROR] Не удалось прочитать staging area: $_" -ForegroundColor Red
-    }
-  }
-  
-  # Фолбэк: проверяем глобальный файл (для обратной совместимости)
-  $globalReposFile = Join-Path $env:USERPROFILE ".ergovcs\repos.json"
-  if (Test-Path $globalReposFile) {
-    Write-Host "[DEBUG] Пробуем глобальный файл: $globalReposFile" -ForegroundColor Gray
-    try {
-      $reposJson = Get-Content $globalReposFile -Raw -Encoding UTF8
-      $repos = $reposJson | ConvertFrom-Json -ErrorAction Stop
-      
-      foreach ($property in $repos.repositories.PSObject.Properties) {
-        $uuid = $property.Name
-        $repo = $property.Value
-        
-        if ($repo.local_path -and (
-            $repo.local_path -eq $LocalPath -or 
-            (Resolve-Path $repo.local_path -ErrorAction SilentlyContinue) -eq (Resolve-Path $LocalPath -ErrorAction SilentlyContinue))) {
-          Write-Host "[DEBUG] Найден UUID в глобальном файле: $uuid" -ForegroundColor Gray
-          return $uuid
-        }
-      }
-    }
-    catch {
-      Write-Host "[ERROR] Не удалось прочитать глобальный repos.json: $_" -ForegroundColor Red
-    }
-  }
-  
-  Write-Host "[DEBUG] UUID репозитория не найден" -ForegroundColor Gray
-  return $null
-}
-
-# Получить путь к файлу staging area
-function Get-StagingFilePath {
-  $LocalPath = Find-LocalRepositoryRoot
-  if (-not $LocalPath) {
-    return $null
-  }
-  
-  $ergovcsDir = Join-Path $LocalPath ".ergovcs"
-  New-Item -ItemType Directory -Force -Path $ergovcsDir | Out-Null
-  return Join-Path $ergovcsDir "staging.json"
-}
-
-# Прочитать staging area
-function Get-StagingArea {
-  $stagingFile = Get-StagingFilePath
-  if (-not $stagingFile -or -not (Test-Path $stagingFile)) {
-    return @{
-      repository_uuid = $null
-      files = @()
-      pending_commit = $null
-    }
-  }
-  
-  try {
-    $content = Get-Content $stagingFile -Raw -Encoding UTF8 | ConvertFrom-Json
-    return @{
-      repository_uuid = $content.repository_uuid
-      files = if ($content.files) { $content.files } else { @() }
-      pending_commit = $content.pending_commit
-    }
-  }
-  catch {
-    Write-Host "[ERROR] Не удалось прочитать staging area: $_" -ForegroundColor Red
-    return @{
-      repository_uuid = $null
-      files = @()
-      pending_commit = $null
-    }
-  }
-}
-
-# Сохранить staging area
-function Save-StagingArea {
-  param([hashtable]$Staging)
-  
-  $stagingFile = Get-StagingFilePath
-  if (-not $stagingFile) {
-    Write-Host "[ERROR] Не удалось определить путь к staging area. Убедитесь, что вы находитесь в репозитории." -ForegroundColor Red
-    return $false
-  }
-  
-  try {
-    $json = @{
-      repository_uuid = $Staging.repository_uuid
-      files = $Staging.files
-      pending_commit = $Staging.pending_commit
-    } | ConvertTo-Json -Depth 10
-    
-    $json | Set-Content -Path $stagingFile -Encoding UTF8 -NoNewline
-    return $true
-  }
-  catch {
-    Write-Host "[ERROR] Не удалось сохранить staging area: $_" -ForegroundColor Red
-    return $false
-  }
-}
-
-# Определить действие файла (added, modified, deleted)
-function Get-FileAction {
+# Получить содержимое проекта (из API или backup.json)
+function Get-ProjectContent {
   param(
-    [string]$FilePath,
+    [string]$RepoUuid,
     [string]$LocalPath
   )
   
-  $fullPath = if ([System.IO.Path]::IsPathRooted($FilePath)) {
-    $FilePath
-  } else {
-    Join-Path $LocalPath $FilePath
+  # 1. Пробуем получить через API
+  try {
+    $apiResponse = Invoke-ApiGetRepoFiles -RepoUuid $RepoUuid
+    if ($apiResponse) {
+      $data = $apiResponse | ConvertFrom-Json
+      return @{
+        source = "api"
+        structure = if ($data.structure) { $data.structure } else { $data.items }
+      }
+    }
+  }
+  catch {
+    Write-Host "[DEBUG] Не удалось получить содержимое проекта через API: $_" -ForegroundColor Gray
   }
   
-  if (-not (Test-Path $fullPath)) {
-    return "deleted"
+  # 2. Пробуем получить из backup.json
+  $backupFile = Join-Path $LocalPath ".ergovcs" "backup.json"
+  if (Test-Path $backupFile) {
+    try {
+      $backupContent = Get-Content $backupFile -Raw -Encoding UTF8
+      $backupData = $backupContent | ConvertFrom-Json
+      return @{
+        source = "backup"
+        structure = if ($backupData.structure) { $backupData.structure } else { $backupData.items }
+        timestamp = $backupData.timestamp
+      }
+    }
+    catch {
+      Write-Host "[DEBUG] Не удалось прочитать backup.json: $_" -ForegroundColor Gray
+    }
   }
   
-  # Проверяем, существует ли файл в репозитории на сервере
-  # Для простоты считаем, что если файл существует локально, то он modified или added
-  # Проверяем наличие файла в удаленном репозитории через API (если доступно)
-  # Пока что используем эвристику: если файл в подпапках api/ или client/, то это новый файл
-  # В будущем можно добавить проверку через API или локальный индекс
-  
-  $relativePath = [System.IO.Path]::GetRelativePath($LocalPath, $fullPath).Replace('\', '/')
-  if ($relativePath -match '^(api|client)/') {
-    # Файлы в api/ или client/ считаем новыми (added)
-    return "added"
+  # 3. Создаем пустую структуру
+  Write-Host "[INFO] Не удалось получить предыдущее состояние проекта. Будет создано пустое состояние." -ForegroundColor Yellow
+  return @{
+    source = "empty"
+    structure = @()
   }
-  
-  return "modified"
 }
 
+# Создать структуру файла/директории для backup.json
+function Create-FileStructure {
+  param(
+    [string]$Path,
+    [bool]$IsDirectory,
+    [string]$ContentHash = $null,
+    [string]$OldPath = $null
+  )
+  
+  $structure = @{
+    name = Split-Path $Path -Leaf
+    path = $Path
+    is_directory = $IsDirectory
+  }
+  
+  if ($ContentHash) {
+    $structure.hash = $ContentHash
+  }
+  
+  if ($OldPath) {
+    $structure.old_path = $OldPath
+  }
+  
+  return $structure
+}
+
+# Получить автора коммита
+function Get-CommitAuthor {
+  # 1. Пробуем получить через API
+  try {
+    $apiResponse = Invoke-ApiRequest -Method "GET" -Endpoint "/user/current/"
+    if ($apiResponse) {
+      $userData = $apiResponse | ConvertFrom-Json
+      if ($userData.username) {
+        return $userData.username
+      }
+    }
+  }
+  catch {
+    Write-Host "[DEBUG] Не удалось получить пользователя через API: $_" -ForegroundColor Gray
+  }
+  
+  # 2. Пробуем получить из переменных окружения
+  if ($env:USERNAME) {
+    return $env:USERNAME
+  }
+  elseif ($env:USER) {
+    return $env:USER
+  }
+  
+  # 3. Пробуем получить из системы
+  try {
+    return $env:UserName
+  }
+  catch {
+    Write-Host "[DEBUG] Не удалось получить имя пользователя системы" -ForegroundColor Gray
+  }
+  
+  # 4. Возвращаем Unknown
+  return "Unknown"
+}
+
+# Определить тип коммита на основе изменений
+function Get-CommitType {
+  param(
+    [array]$Files,
+    [string]$Message
+  )
+  
+  # Проверяем, указан ли тип в сообщении
+  $commitTypes = @("feat", "fix", "docs", "style", "refactor", "test", "chore", "perf", "ci", "build", "revert")
+  
+  if ($Message -match '^(\w+):') {
+    $type = $Matches[1]
+    if ($commitTypes -contains $type) {
+      return $type
+    }
+  }
+  
+  # Автоматическое определение типа на основе изменений
+  $hasBuildFiles = $false
+  $hasSourceFiles = $false
+  $hasDocsFiles = $false
+  $hasStyleFiles = $false
+  
+  foreach ($file in $Files) {
+    $path = $file.path.ToLower()
+    
+    # Проверяем файлы сборки
+    if ($path -match '(package\.json|pom\.xml|build\.gradle|build\.xml|cmakelists\.txt|makefile|dockerfile|\.yml$|\.yaml$|\.json$|\.config$|\.ini$)') {
+      $hasBuildFiles = $true
+    }
+    
+    # Проверяем исходные файлы (новый функционал)
+    if ($path -match '(\.py$|\.js$|\.ts$|\.java$|\.cpp$|\.cs$|\.php$|\.rb$|\.go$)') {
+      if ($file.action -eq "created") {
+        $hasSourceFiles = $true
+      }
+    }
+    
+    # Проверяем документацию
+    if ($path -match '(readme\.md|readme\.txt|\.md$|\.rst$|docs?\/)') {
+      $hasDocsFiles = $true
+    }
+    
+    # Проверяем стили
+    if ($path -match '(\.css$|\.scss$|\.less$|\.sass$|\.styl$)') {
+      $hasStyleFiles = $true
+    }
+  }
+  
+  # Определяем тип по приоритету
+  if ($hasBuildFiles) {
+    return "build"
+  }
+  elseif ($hasSourceFiles) {
+    return "feat"
+  }
+  elseif ($hasDocsFiles) {
+    return "docs"
+  }
+  elseif ($hasStyleFiles) {
+    return "style"
+  }
+  else {
+    return "chore"
+  }
+}
