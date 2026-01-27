@@ -240,24 +240,19 @@ api_clone_repository() {
 }
 
 # Создать коммит через API
+#   $1 - UUID, $2 - сообщение, $3 - файлы (JSON), $4 - ветка (опционально, branch_name)
 api_create_commit() {
-  # Параметры:
-  #   $1 - UUID репозитория
-  #   $2 - сообщение коммита
-  #   $3 - список измененных файлов (JSON)
-  # Возвращает: JSON с информацией о созданном коммите (hash, id, message, etc.)
-  
   local uuid="$1"
   local message="$2"
-  local files="${3:-}"
+  local files="${3:-[]}"
+  local branch="${4:-}"
   
   local body
-  if [[ -n "$files" ]]; then
-    body="{\"message\": \"$message\", \"files\": $files}"
+  if [[ -n "$branch" ]]; then
+    body="{\"message\": \"$message\", \"files\": $files, \"branch_name\": \"$branch\"}"
   else
-    body="{\"message\": \"$message\"}"
+    body="{\"message\": \"$message\", \"files\": $files}"
   fi
-  
   api_request "POST" "/repositories/$uuid/commits/create/" "$body"
 }
 

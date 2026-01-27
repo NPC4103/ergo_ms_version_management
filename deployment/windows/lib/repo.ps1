@@ -1,4 +1,4 @@
-﻿# Логика работы с репозиториями: создание структуры, сохранение метаданных, импорт, работа с API
+# Логика работы с репозиториями: создание структуры, сохранение метаданных, импорт, работа с API
 
 # ============================================================================
 # Функции для работы с API
@@ -247,17 +247,19 @@ function Invoke-ApiCreateCommit {
   param(
     [string]$Uuid,
     [string]$Message,
-    [string]$Files = $null
+    $Files = $null,
+    [string]$Branch = $null
   )
   
-  # Преобразуем строку JSON в объект, если она передана
   $filesArray = @()
   if ($Files) {
     try {
       if ($Files -is [string]) {
-        $filesArray = $Files | ConvertFrom-Json
-      } else {
+        $filesArray = @($Files | ConvertFrom-Json)
+      } elseif ($Files -is [array]) {
         $filesArray = $Files
+      } else {
+        $filesArray = @($Files)
       }
     }
     catch {
@@ -266,17 +268,17 @@ function Invoke-ApiCreateCommit {
     }
   }
   
-  # Подготавливаем тело запроса
   $bodyObj = @{
     message = $Message
     files = $filesArray
   }
+  if ($Branch) {
+    $bodyObj["branch_name"] = $Branch
+  }
   
   $body = $bodyObj | ConvertTo-Json -Depth 10
   
-  # Вызываем API
   $response = Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/$Uuid/commits/create/" -Body $body
-  
   return $response
 }
 

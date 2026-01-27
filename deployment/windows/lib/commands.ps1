@@ -393,16 +393,13 @@ function Invoke-Add {
 
 # ============================================================================
 # Создание коммита
-# Команда: ergovcs commit --message "Сообщение" [--update-changes] [--edit-message]
-# Создаёт коммит с изменениями
+# Команда: ergovcs commit --message "Сообщение"
+# Создаёт коммит через API
 # ============================================================================
 function Invoke-Commit {
   param([string[]]$MessageArg)
   
-  # 1. Парсинг аргументов
   $message = $null
-  $updateChanges = $false
-  $editMessage = $false
   
   for ($i = 0; $i -lt $MessageArg.Count; $i++) {
     $arg = $MessageArg[$i]
@@ -412,7 +409,6 @@ function Invoke-Commit {
         if ($i -lt $MessageArg.Count) {
             $message = $MessageArg[$i]
         } else {
-            # Если после -m ничего нет, запросим позже
             $message = ""
         }
       }
@@ -421,21 +417,6 @@ function Invoke-Commit {
         if ($i -lt $MessageArg.Count) {
             $message = $MessageArg[$i]
         } else {
-            # Если после --message ничего нет, запросим позже
-            $message = ""
-        }
-      }
-      "-uc" { $updateChanges = $true }
-      "--update-changes" { $updateChanges = $true }
-      "-em" { $editMessage = $true }
-      "--edit-message" { 
-        $editMessage = $true
-        # Проверяем, есть ли следующее значение для сообщения
-        if ($i + 1 -lt $MessageArg.Count -and -not $MessageArg[$i + 1].StartsWith("-")) {
-            $i++
-            $message = $MessageArg[$i]
-        } else {
-            # Если после --edit-message ничего нет, запросим позже
             $message = ""
         }
       }
@@ -447,13 +428,7 @@ function Invoke-Commit {
     }
   }
   
-  # Валидация опций
-  if ($updateChanges -and $editMessage) {
-    Write-Host "[ERROR] Опции --update-changes и --edit-message не могут использоваться вместе." -ForegroundColor Red
-    exit 1
-  }
-  
-  # 2. Определить корень репозитория
+  # Определить корень репозитория
   $repoRoot = Find-LocalRepositoryRoot
   if (-not $repoRoot) {
     Write-Host "[ERROR] Не удалось найти репозиторий." -ForegroundColor Red
@@ -483,172 +458,62 @@ function Invoke-Commit {
     exit 1
   }
   
-  # 5. Проверить, есть ли файлы в staging area
-  if ((-not $staging.files -or $staging.files.Count -eq 0) -and -not $editMessage) {
+  if (-not $staging.files -or $staging.files.Count -eq 0) {
     Write-Host "[ERROR] Нет файлов в staging area." -ForegroundColor Red
     exit 1
   }
   
-  # 6. Получить автора коммита
-  $author = Get-CommitAuthor
-  Write-Host "[INFO] Автор коммита: $author" -ForegroundColor Cyan
-  
-  # 7. Определить тип коммита
-  $commitType = Get-CommitType -Files $staging.files -Message $message
-  
-  # 8. Запросить сообщение, если оно не указано
-  if ([string]::IsNullOrWhiteSpace($message) -and -not $updateChanges) {
+  if ([string]::IsNullOrWhiteSpace($message)) {
     Write-Host "[INFO] Введите сообщение коммита:" -ForegroundColor Cyan
-
     $message = Read-Host "Сообщение"
-    
     if ([string]::IsNullOrWhiteSpace($message)) {
       Write-Host "[ERROR] Сообщение коммита не может быть пустым." -ForegroundColor Red
       exit 1
     }
   }
   
-  # Добавляем тип к сообщению, если его там нет
-  $commitTypes = @("feat", "fix", "docs", "style", "refactor", "test", "chore", "perf", "ci", "build", "revert")
-  $hasType = $false
-  
-  if ($message -match '^(\w+):') {
-    $typeInMessage = $Matches[1]
-    if ($commitTypes -contains $typeInMessage) {
-      $hasType = true
+  $filesForApi = @($staging.files | ForEach-Object {
+    @{
+      path = $_.path
+      content = if ($_.content) { $_.content } else { "" }
+      action = if ($_.action) { $_.action } else { "modified" }
     }
-  }
+  })
   
-  if (-not $hasType) {
-    $message = "$commitType`: $message"
-    Write-Host "[INFO] Автоматически определен тип коммита: $commitType" -ForegroundColor Cyan
-  }
+  $currentBranch = Get-CurrentBranch -LocalPath $repoRoot
+  $response = Invoke-ApiCreateCommit -Uuid $uuid -Message $message -Files $filesForApi -Branch $currentBranch
   
-  # 9. Классификация изменений
-  $actionStats = @{
-    created = @{ count = 0; files = 0; dirs = 0 }
-    updated = @{ count = 0; files = 0; dirs = 0 }
-    deleted = @{ count = 0; files = 0; dirs = 0 }
-    renamed = @{ count = 0; files = 0; dirs = 0 }
-  }
-  
-  foreach ($file in $staging.files) {
-    $action = $file.action
-    if ($actionStats.ContainsKey($action)) {
-      $actionStats[$action].count++
-      if ($file.is_directory) {
-        $actionStats[$action].dirs++
-      } else {
-        $actionStats[$action].files++
-      }
-    }
-  }
-  
-  $changeSummary = @()
-  foreach ($action in $actionStats.Keys) {
-    if ($actionStats[$action].count -gt 0) {
-      $summary = "$($actionStats[$action].count) $action"
-      if ($actionStats[$action].files -gt 0) {
-        $summary += " ($($actionStats[$action].files) файлов"
-        if ($actionStats[$action].dirs -gt 0) {
-          $summary += ", $($actionStats[$action].dirs) директорий"
-        }
-        $summary += ")"
-      } elseif ($actionStats[$action].dirs -gt 0) {
-        $summary += " ($($actionStats[$action].dirs) директорий)"
-      }
-      $changeSummary += $summary
-    }
-  }
-  
-  $changeSummaryStr = if ($changeSummary.Count -gt 0) { ($changeSummary -join ", ") } else { "нет изменений" }
-  
-  # 10. Обработка файла commit.json
-  $commitFile = Join-Path $repoRoot ".ergovcs" "commit.json"
-  $existingCommit = $null
-  
-  if (Test-Path $commitFile) {
-    try {
-      $existingCommitJson = Get-Content $commitFile -Raw -Encoding UTF8
-      $existingCommit = $existingCommitJson | ConvertFrom-Json -ErrorAction Stop
-    }
-    catch {
-      Write-Host "[WARNING] Не удалось прочитать существующий коммит." -ForegroundColor Yellow
-      $existingCommit = $null
-    }
-  }
-  
-  # 11. Создание/обновление коммита
-  $commit = @{
-    repository_uuid = $uuid
-    message = $message
-    author = $author
-    type = $commitType
-    created_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-    files = @()
-    change_summary = $changeSummaryStr
-    stats = $actionStats
-  }
-  
-  if ($editMessage -or $updateChanges) {
-    if (-not $existingCommit) {
-      Write-Host "[ERROR] Не существует коммита для редактирования." -ForegroundColor Red
-      exit 1
-    }
-      
-      Write-Host "[INFO] Редактирование существующего коммита..." -ForegroundColor Yellow
-      
-      # Сохраняем исходную дату создания
-      $commit.created_at = $existingCommit.created_at
-      
-      if ($editMessage) {
-        # Обновляем только сообщение
-        $commit.files = $existingCommit.files
-        $commit.change_summary = $existingCommit.change_summary
-        $commit.stats = $existingCommit.stats
-        Write-Host "[INFO] Обновлено только сообщение коммита." -ForegroundColor Cyan
-      } elseif ($updateChanges) {
-        # Обновляем только файлы
-        $commit.message = $existingCommit.message
-        $commit.type = $existingCommit.type
-        $commit.files = $staging.files
-        Write-Host "[INFO] Обновлены только файлы в коммите." -ForegroundColor Cyan
-      }
-  } else {
-    # Создаем новый коммит
-    $commit.files = $staging.files
-  }
-  
-  # 12. Сохранить коммит в файл commit.json
-  try {
-    $jsonContent = $commit | ConvertTo-Json -Depth 10
-    Set-Content -Path $commitFile -Value $jsonContent -Encoding UTF8 -Force
-    
-    Write-Host "`n[OK] Коммит создан локально." -ForegroundColor Green
-    Write-Host "Тип: $($commit.type)" -ForegroundColor Cyan
-    Write-Host "Сообщение: $($commit.message)" -ForegroundColor Cyan
-    Write-Host "Автор: $($commit.author)" -ForegroundColor Cyan
-    Write-Host "Изменения: $($commit.change_summary)" -ForegroundColor Cyan
-    
-    # 13. Очистить staging area (только если не редактируем сообщение)
-    if (-not $editMessage) {
-      $emptyStaging = @{
-        repository_uuid = $uuid
-        files = @()
-      }
-      $emptyStagingJson = $emptyStaging | ConvertTo-Json -Depth 10
-      Set-Content -Path $stagingFile -Value $emptyStagingJson -Encoding UTF8 -Force
-      Write-Host "[INFO] Staging area очищен." -ForegroundColor Cyan
-    } else {
-      Write-Host "[INFO] Staging area сохранен для возможных изменений." -ForegroundColor Yellow
-    }
-    
-    Write-Host "[INFO] Используйте команду 'push' для отправки коммита на сервер." -ForegroundColor Yellow
-  }
-  catch {
-    Write-Host "[ERROR] Не удалось сохранить коммит: $_" -ForegroundColor Red
+  if (-not $response) {
+    Write-Host "[ERROR] Не удалось создать коммит через API." -ForegroundColor Red
     exit 1
   }
+  
+  try {
+    $res = $response | ConvertFrom-Json -ErrorAction Stop
+  }
+  catch {
+    Write-Host "[ERROR] Неверный ответ API: $_" -ForegroundColor Red
+    exit 1
+  }
+  
+  if (-not $res.success) {
+    Write-Host "[ERROR] $($res.error)" -ForegroundColor Red
+    exit 1
+  }
+  
+  $commit = $res.commit
+  Write-Host "`n[OK] Коммит создан через API." -ForegroundColor Green
+  if ($commit) {
+    Write-Host "Хеш: $($commit.hash)" -ForegroundColor Cyan
+    Write-Host "Сообщение: $($commit.message)" -ForegroundColor Cyan
+    Write-Host "Файлов: $($commit.files_count)" -ForegroundColor Cyan
+    if ($commit.author) { Write-Host "Автор: $($commit.author)" -ForegroundColor Cyan }
+  }
+  
+  $emptyStaging = @{ repository_uuid = $uuid; files = @() }
+  Set-Content -Path $stagingFile -Value ($emptyStaging | ConvertTo-Json -Depth 10) -Encoding UTF8 -Force
+  Write-Host "[INFO] Staging area очищен." -ForegroundColor Cyan
+  Write-Host "[INFO] Используйте команду 'push' для отправки коммита на сервер." -ForegroundColor Yellow
 }
 
 # ============================================================================

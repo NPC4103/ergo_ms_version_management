@@ -509,281 +509,98 @@ PYTHON
 
 # ============================================================================
 # Создание коммита
-# Команда: ergovcs commit --message "Сообщение" [--update-changes] [--edit-message]
-# Создаёт коммит с изменениями
+# Команда: ergovcs commit --message "Сообщение"
+# Создаёт коммит через API (автор, хеш и т.д. определяются на стороне API)
 # ============================================================================
 cmd_commit() {
-  # 1. Парсинг аргументов
   local message=""
-  local update_changes=false
-  local edit_message=false
   
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      -m|--message)
-        shift
-        message="${1:-}"
-        ;;
-      -uc|--update-changes)
-        update_changes=true
-        ;;
-      -em|--edit-message)
-        edit_message=true
-        # Проверяем, есть ли следующее значение для сообщения
-        if [[ $# -gt 1 ]] && [[ ! "$2" =~ ^- ]]; then
-          shift
-          message="$1"
-        fi
-        ;;
-      *)
-        if [[ -z "$message" ]] && [[ ! "$1" =~ ^- ]]; then
-          message="$1"
-        fi
-        ;;
+      -m|--message) shift; message="${1:-}" ;;
+      *) [[ -z "$message" ]] && [[ ! "$1" =~ ^- ]] && message="$1" ;;
     esac
     shift || true
   done
   
-  # Валидация опций
-  if [[ "$update_changes" == "true" ]] && [[ "$edit_message" == "true" ]]; then
-    echo "[ERROR] Опции --update-changes и --edit-message не могут использоваться вместе." >&2
-    exit 1
-  fi
-  
-  # 2. Определить корень репозитория
   local repo_root
   repo_root="$(find_repository_root)"
-  if [[ -z "$repo_root" ]]; then
-    echo "[ERROR] Не удалось найти репозиторий." >&2
-    exit 1
-  fi
+  [[ -z "$repo_root" ]] && echo "[ERROR] Не удалось найти репозиторий." >&2 && exit 1
   
-  # 3. Получить UUID текущего репозитория
   local uuid
   uuid="$(get_current_repository_uuid)"
-  if [[ -z "$uuid" ]]; then
-    echo "[ERROR] Не удалось определить UUID репозитория." >&2
-    exit 1
-  fi
+  [[ -z "$uuid" ]] && echo "[ERROR] Не удалось определить UUID репозитория." >&2 && exit 1
   
-  # 4. Прочитать staging area
   local staging_file="$repo_root/.ergovcs/staging.json"
-  if [[ ! -f "$staging_file" ]]; then
-    echo "[ERROR] Staging area не найден." >&2
-    exit 1
-  fi
+  [[ ! -f "$staging_file" ]] && echo "[ERROR] Staging area не найден." >&2 && exit 1
   
   local staging_json
   staging_json="$(get_staging_area)"
-  
-  # 5. Проверить, есть ли файлы в staging area
   local files_count
-  files_count="$(echo "$staging_json" | python3 -c "import json, sys; data = json.load(sys.stdin); print(len(data.get('files', [])))" 2>/dev/null)"
+  files_count="$(echo "$staging_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('files',[])))" 2>/dev/null)"
   if [[ -z "$files_count" ]] || [[ "$files_count" -eq 0 ]]; then
-    if [[ "$edit_message" != "true" ]]; then
-      echo "[ERROR] Нет файлов в staging area." >&2
-      exit 1
-    fi
-  fi
-  
-  # 6. Получить автора коммита
-  local author
-  author="$(get_commit_author)"
-  echo "[INFO] Автор коммита: $author" >&2
-  
-  # 7. Определить тип коммита
-  local files_json
-  files_json="$(echo "$staging_json" | python3 -c "import json, sys; data = json.load(sys.stdin); print(json.dumps(data.get('files', [])))" 2>/dev/null)"
-  local commit_type
-  commit_type="$(get_commit_type "$files_json" "$message")"
-  
-  # 8. Запросить сообщение, если оно не указано
-  if [[ -z "$message" ]] && [[ "$update_changes" != "true" ]]; then
-    echo "[INFO] Введите сообщение коммита:" >&2
-    read -r message
-    
-    if [[ -z "$message" ]]; then
-      echo "[ERROR] Сообщение коммита не может быть пустым." >&2
-      exit 1
-    fi
-  fi
-  
-  # Добавляем тип к сообщению, если его там нет
-  local commit_types=("feat" "fix" "docs" "style" "refactor" "test" "chore" "perf" "ci" "build" "revert")
-  local has_type=false
-  
-  if echo "$message" | grep -qE '^(\w+):'; then
-    local type_in_message
-    type_in_message="$(echo "$message" | sed -E 's/^(\w+):.*/\1/')"
-    for ct in "${commit_types[@]}"; do
-      if [[ "$type_in_message" == "$ct" ]]; then
-        has_type=true
-        break
-      fi
-    done
-  fi
-  
-  if [[ "$has_type" == "false" ]]; then
-    message="$commit_type: $message"
-    echo "[INFO] Автоматически определен тип коммита: $commit_type" >&2
-  fi
-  
-  # 9. Классификация изменений
-  local action_stats_json
-  action_stats_json="$(echo "$files_json" | python3 -c "
-import json, sys
-files = json.load(sys.stdin)
-stats = {
-    'created': {'count': 0, 'files': 0, 'dirs': 0},
-    'updated': {'count': 0, 'files': 0, 'dirs': 0},
-    'deleted': {'count': 0, 'files': 0, 'dirs': 0},
-    'renamed': {'count': 0, 'files': 0, 'dirs': 0}
-}
-
-for file in files:
-    action = file.get('action', '')
-    is_dir = file.get('is_directory', False)
-    if action in stats:
-        stats[action]['count'] += 1
-        if is_dir:
-            stats[action]['dirs'] += 1
-        else:
-            stats[action]['files'] += 1
-
-print(json.dumps(stats))
-")"
-  
-  local change_summary
-  change_summary="$(echo "$action_stats_json" | python3 -c "
-import json, sys
-stats = json.load(sys.stdin)
-summary_parts = []
-
-for action in ['created', 'updated', 'deleted', 'renamed']:
-    if stats[action]['count'] > 0:
-        summary = f\"{stats[action]['count']} {action}\"
-        if stats[action]['files'] > 0:
-            summary += f\" ({stats[action]['files']} файлов\"
-            if stats[action]['dirs'] > 0:
-                summary += f\", {stats[action]['dirs']} директорий\"
-            summary += \")\"
-        elif stats[action]['dirs'] > 0:
-            summary += f\" ({stats[action]['dirs']} директорий)\"
-        summary_parts.append(summary)
-
-print(', '.join(summary_parts) if summary_parts else 'нет изменений')
-")"
-  
-  # 10. Обработка файла commit.json
-  local commit_file="$repo_root/.ergovcs/commit.json"
-  local existing_commit_json=""
-  
-  if [[ -f "$commit_file" ]]; then
-    existing_commit_json="$(cat "$commit_file" 2>/dev/null)"
-  fi
-  
-  # 11. Создание/обновление коммита
-  local commit_json
-  commit_json="$(python3 - <<PYTHON
-import json, sys
-from datetime import datetime
-
-uuid = '${uuid}'
-message = '''${message}'''
-author = '${author}'
-commit_type = '${commit_type}'
-files_json = '''${files_json}'''
-action_stats_json = '''${action_stats_json}'''
-change_summary = '''${change_summary}'''
-existing_commit_json = '''${existing_commit_json}'''
-update_changes = ${update_changes}
-edit_message = ${edit_message}
-
-try:
-    files = json.loads(files_json)
-    action_stats = json.loads(action_stats_json)
-except:
-    files = []
-    action_stats = {'created': {'count': 0}, 'updated': {'count': 0}, 'deleted': {'count': 0}, 'renamed': {'count': 0}}
-
-commit = {
-    'repository_uuid': uuid,
-    'message': message,
-    'author': author,
-    'type': commit_type,
-    'created_at': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
-    'files': files,
-    'change_summary': change_summary,
-    'stats': action_stats
-}
-
-if edit_message or update_changes:
-    if not existing_commit_json:
-        print('[ERROR] Не существует коммита для редактирования.', file=sys.stderr)
-        sys.exit(1)
-    
-    try:
-        existing_commit = json.loads(existing_commit_json)
-    except:
-        print('[ERROR] Не удалось прочитать существующий коммит.', file=sys.stderr)
-        sys.exit(1)
-    
-    # Сохраняем исходную дату создания
-    commit['created_at'] = existing_commit.get('created_at', commit['created_at'])
-    
-    if edit_message:
-        # Обновляем только сообщение
-        commit['files'] = existing_commit.get('files', [])
-        commit['change_summary'] = existing_commit.get('change_summary', '')
-        commit['stats'] = existing_commit.get('stats', {})
-    elif update_changes:
-        # Обновляем только файлы
-        commit['message'] = existing_commit.get('message', message)
-        commit['type'] = existing_commit.get('type', commit_type)
-        commit['files'] = files
-
-print(json.dumps(commit, ensure_ascii=False))
-PYTHON
-)"
-  
-  if [[ $? -ne 0 ]]; then
-    echo "[ERROR] Не удалось создать коммит" >&2
+    echo "[ERROR] Нет файлов в staging area." >&2
     exit 1
   fi
   
-  # 12. Сохранить коммит в файл commit.json
-  echo "$commit_json" > "$commit_file"
-  
-  echo ""
-  echo "[OK] Коммит создан локально." >&2
-  
-  local commit_message commit_type_display commit_author commit_summary
-  commit_message="$(echo "$commit_json" | python3 -c "import json, sys; print(json.load(sys.stdin).get('message', ''))")"
-  commit_type_display="$(echo "$commit_json" | python3 -c "import json, sys; print(json.load(sys.stdin).get('type', ''))")"
-  commit_author="$(echo "$commit_json" | python3 -c "import json, sys; print(json.load(sys.stdin).get('author', ''))")"
-  commit_summary="$(echo "$commit_json" | python3 -c "import json, sys; print(json.load(sys.stdin).get('change_summary', ''))")"
-  
-  echo "Тип: $commit_type_display" >&2
-  echo "Сообщение: $commit_message" >&2
-  echo "Автор: $commit_author" >&2
-  echo "Изменения: $commit_summary" >&2
-  
-  # 13. Очистить staging area (только если не редактируем сообщение)
-  if [[ "$edit_message" != "true" ]]; then
-    local empty_staging_json
-    empty_staging_json="$(python3 -c "
-import json
-print(json.dumps({
-    'repository_uuid': '${uuid}',
-    'files': []
-}))
-")"
-    echo "$empty_staging_json" > "$staging_file"
-    echo "[INFO] Staging area очищен." >&2
-  else
-    echo "[INFO] Staging area сохранен для возможных изменений." >&2
+  if [[ -z "$message" ]]; then
+    echo "[INFO] Введите сообщение коммита:" >&2
+    read -r message
+    [[ -z "$message" ]] && echo "[ERROR] Сообщение коммита не может быть пустым." >&2 && exit 1
   fi
   
+  local files_for_api
+  files_for_api="$(echo "$staging_json" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+files=d.get('files',[])
+out=[{'path':f.get('path',''),'content':f.get('content','') or '','action':f.get('action','modified') or 'modified'} for f in files]
+print(json.dumps(out))
+")"
+  
+  local branch=""
+  if [[ -f "$HOME/.ergovcs/repos.json" ]]; then
+    branch="$(ERGOVCS_REPO_ROOT="$repo_root" python3 -c "
+import json, os
+r = os.environ.get('ERGOVCS_REPO_ROOT', '')
+try:
+    with open(os.path.expanduser('~/.ergovcs/repos.json')) as f:
+        d = json.load(f)
+    for k, v in (d.get('repositories') or {}).items():
+        if isinstance(v, dict) and (v.get('local_path') or '') == r:
+            print(v.get('current_branch', ''))
+            break
+except Exception:
+    pass
+" 2>/dev/null)"
+  fi
+  
+  local response
+  response="$(api_create_commit "$uuid" "$message" "$files_for_api" "$branch")"
+  [[ -z "$response" ]] && echo "[ERROR] Не удалось создать коммит через API." >&2 && exit 1
+  
+  local success err
+  success="$(echo "$response" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('success', False))" 2>/dev/null)"
+  if [[ "$success" != "True" ]] && [[ "$success" != "true" ]]; then
+    err="$(echo "$response" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('error','Ошибка API'))")"
+    echo "[ERROR] $err" >&2
+    exit 1
+  fi
+  
+  echo "" >&2
+  echo "[OK] Коммит создан через API." >&2
+  local hash msg cnt author
+  hash="$(echo "$response" | python3 -c "import json,sys; c=json.load(sys.stdin).get('commit',{}); print(c.get('hash',''))")"
+  msg="$(echo "$response" | python3 -c "import json,sys; c=json.load(sys.stdin).get('commit',{}); print(c.get('message',''))")"
+  cnt="$(echo "$response" | python3 -c "import json,sys; c=json.load(sys.stdin).get('commit',{}); print(c.get('files_count',''))")"
+  author="$(echo "$response" | python3 -c "import json,sys; c=json.load(sys.stdin).get('commit',{}); print(c.get('author',''))")"
+  [[ -n "$hash" ]] && echo "Хеш: $hash" >&2
+  [[ -n "$msg" ]] && echo "Сообщение: $msg" >&2
+  [[ -n "$cnt" ]] && echo "Файлов: $cnt" >&2
+  [[ -n "$author" ]] && echo "Автор: $author" >&2
+  
+  echo "$(python3 -c "import json; print(json.dumps({'repository_uuid':'$uuid','files':[]}))")" > "$staging_file"
+  echo "[INFO] Staging area очищен." >&2
   echo "[INFO] Используйте команду 'push' для отправки коммита на сервер." >&2
 }
 
