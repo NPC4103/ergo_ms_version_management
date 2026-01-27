@@ -505,8 +505,39 @@ function Invoke-Remove {
 
   # TODO: Реализовать удаление локальной копии
   Write-Host "[INFO] Удаление локальной копии репозитория $uuid..." -ForegroundColor Cyan
-  Write-Host "[TODO] Найти локальную копию репозитория" -ForegroundColor Yellow
-  Write-Host "[TODO] Удалить локальную копию" -ForegroundColor Yellow
+
+  if (Test-Path -LiteralPath $localPath) {
+    try {
+      $item = Get-Item -LiteralPath $localPath -ErrorAction Stop
+      if ($item.PSIsContainer) {
+        Remove-Item -LiteralPath $localPath -Recurse -Force -ErrorAction Stop
+      } else {
+        Remove-Item -LiteralPath $localPath -Force -ErrorAction Stop
+      }
+      Write-Host "[OK] Локальная копия удалена: $localPath" -ForegroundColor Green
+    } catch {
+      Write-Host "[ERROR] Не удалось удалить локальную копию: $localPath" -ForegroundColor Red
+      Write-Host $_.Exception.Message -ForegroundColor Yellow
+      exit 1
+    }
+  } else {
+    Write-Host "[WARN] Локальный путь не найден на диске: $localPath" -ForegroundColor Yellow
+    Write-Host "[INFO] Запись всё равно будет удалена из конфига." -ForegroundColor Yellow
+  }
+
+  # Удаляем запись из repos.json
+  $null = $repos.PSObject.Properties.Remove($uuid)
+  $data.repositories = $repos
+
+  try {
+    $jsonOut = $data | ConvertTo-Json -Depth 10
+    $jsonOut | Set-Content -Path $reposFile -Encoding UTF8
+    Write-Host "[OK] Запись удалена из конфига: $reposFile" -ForegroundColor Green
+  } catch {
+    Write-Host "[ERROR] Не удалось обновить файл конфига: $reposFile" -ForegroundColor Red
+    Write-Host $_.Exception.Message -ForegroundColor Yellow
+    exit 1
+  }
 }
 
 function Invoke-Create {
