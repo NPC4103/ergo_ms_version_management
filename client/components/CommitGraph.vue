@@ -11,22 +11,32 @@
       
       <div class="graph-controls">
         <select v-model="currentBranch" class="form-select form-select-sm" style="width: 200px;">
-          <option v-for="branch in branches" :key="branch" :value="branch">{{ branch }}</option>
+          <option v-for="branch in branches" :key="branch" :value="branch">
+            {{ branch === 'all' ? 'Все ветки' : branch }}
+          </option>
         </select>
         
-        <div class="zoom-controls">
-          <button class="btn btn-outline-secondary btn-sm" @click="zoomIn" title="Приблизить">
-            <i class="bi bi-zoom-in"></i>
+        <div class="btn-group btn-group-sm">
+          <button class="btn btn-outline-secondary" @click="resetSimulation" title="Перезапустить симуляцию (R)">
+            ⟲
           </button>
-          <span class="zoom-level">{{ Math.round(zoom * 100) }}%</span>
-          <button class="btn btn-outline-secondary btn-sm" @click="zoomOut" title="Отдалить">
-            <i class="bi bi-zoom-out"></i>
-          </button>
-          <button class="btn btn-outline-secondary btn-sm" @click="resetZoom" title="Сбросить">
-            <i class="bi bi-arrows-fullscreen"></i>
+          <button class="btn btn-outline-secondary" @click="centerGraph" title="Центрировать (C)">
+            ⊕
           </button>
         </div>
+
+        <select v-model="selectedMetric" class="form-select form-select-sm" style="width: 180px;">
+          <option value="importance">Важность</option>
+          <option value="degree">Связность</option>
+          <option value="betweenness">Влияние</option>
+          <option value="pagerank">Авторитет</option>
+        </select>
       </div>
+    </div>
+
+    <!-- Error Alert -->
+    <div v-if="debugError" class="alert alert-danger py-2 mb-3">
+      <strong>Ошибка D3:</strong> {{ debugError }}
     </div>
 
     <!-- Loading -->
@@ -36,69 +46,10 @@
       </div>
     </div>
 
-    <!-- Graph Container -->
-    <div 
-      v-else 
-      class="graph-container" 
-      ref="graphContainer"
-      @wheel.prevent="handleWheel"
-      @mousedown="startPan"
-      @mousemove="doPan"
-      @mouseup="endPan"
-      @mouseleave="endPan"
-    >
-      <svg 
-        :viewBox="viewBox" 
-        class="commit-graph-svg"
-        :style="{ cursor: isPanning ? 'grabbing' : 'grab' }"
-      >
-        <!-- Connection Lines -->
-        <g class="connections">
-          <path
-            v-for="(line, idx) in connectionLines"
-            :key="'line-' + idx"
-            :d="line.path"
-            :stroke="line.color"
-            stroke-width="2"
-            fill="none"
-            class="connection-line"
-          />
-        </g>
-
-        <!-- Commit Nodes -->
-        <g class="nodes">
-          <g
-            v-for="commit in positionedCommits"
-            :key="commit.hash"
-            :transform="`translate(${commit.x}, ${commit.y})`"
-            class="commit-node-group"
-            @click="goToCommit(commit)"
-            @mouseenter="showTooltip(commit, $event)"
-            @mouseleave="hideTooltip"
-          >
-            <!-- Node Circle -->
-            <circle
-              :r="commit.isMerge ? 14 : 12"
-              :fill="commit.branchColor"
-              :stroke="commit.isMerge ? '#fff' : 'none'"
-              :stroke-width="commit.isMerge ? 3 : 0"
-              class="commit-node"
-              :class="{ 'merge-node': commit.isMerge, 'branch-point': commit.isBranchPoint }"
-            />
-            
-            <!-- Short Hash Label -->
-            <text 
-              :x="20" 
-              y="5" 
-              class="commit-label"
-              :fill="commit.branchColor"
-            >
-              {{ commit.shortHash }}
-            </text>
-          </g>
-        </g>
-      </svg>
-
+    <!-- D3 Graph Container -->
+    <div v-else class="graph-container" ref="graphContainer">
+      <svg ref="svgElement" class="commit-graph-svg"></svg>
+      
       <!-- Tooltip -->
       <div 
         v-if="tooltipData" 
@@ -107,394 +58,510 @@
       >
         <div class="tooltip-header">
           <span class="tooltip-hash">{{ tooltipData.shortHash }}</span>
-          <span class="tooltip-files">{{ tooltipData.filesChanged }} файлов</span>
+          <span class="tooltip-branch" :style="{ background: tooltipData.branchColor }">{{ tooltipData.branch }}</span>
         </div>
         <div class="tooltip-message">{{ tooltipData.message }}</div>
+        <div class="tooltip-metrics">
+          <div class="metric-label">Связность:</div><div class="metric-value">{{ formatMetric(tooltipData.metrics?.degree) }}</div>
+          <div class="metric-label">Авторитет:</div><div class="metric-value">{{ formatMetric(tooltipData.metrics?.pagerank) }}</div>
+          <div class="metric-label">Влияние:</div><div class="metric-value">{{ formatMetric(tooltipData.metrics?.betweenness) }}</div>
+        </div>
         <div class="tooltip-meta">
-          <span><i class="bi bi-person"></i> {{ tooltipData.author }}</span>
-          <span><i class="bi bi-clock"></i> {{ formatDate(tooltipData.date) }}</span>
+          <div class="tooltip-author" :style="{ color: tooltipData.branchColor }">{{ tooltipData.author }}</div>
+          <div class="tooltip-date">{{ formatDate(tooltipData.date) }}</div>
         </div>
       </div>
     </div>
 
-    <!-- Empty State -->
-    <div v-if="!loading && commits.length === 0" class="empty-state">
-      <i class="bi bi-git display-1 text-muted"></i>
-      <p class="text-muted mt-3">Нет коммитов в этой ветке</p>
+    <!-- Stats Overlay -->
+    <div class="graph-legend">
+        <span class="badge bg-secondary me-2">Commits: {{ commits.length }}</span>
+        <div class="legend-items d-inline-flex">
+           <div class="legend-item me-3"><span class="legend-dot" style="background: #3b82f6;"></span> Main</div>
+           <div class="legend-item"><span class="legend-dot" style="background: #fbbf24;"></span> Release</div>
+        </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import * as d3 from 'd3';
 import { apiClient } from '@/js/api/manager';
 import { versionManagementEndpoints } from '../js/endpoints';
+import { calculateAllMetrics } from '../js/graphUtils';
 
 const route = useRoute();
 const router = useRouter();
 const repoId = route.params.id;
 
-// State
+// Refs
+const graphContainer = ref(null);
+const svgElement = ref(null);
 const loading = ref(true);
 const commits = ref([]);
-const branches = ref(['main']);
-const currentBranch = ref('main');
-const zoom = ref(1);
-const panOffset = ref({ x: 0, y: 0 });
-const isPanning = ref(false);
-const panStart = ref({ x: 0, y: 0 });
-const graphContainer = ref(null);
+const branches = ref(['all']);
+const currentBranch = ref('all');
+const selectedMetric = ref('importance');
+const debugError = ref('');
 
 // Tooltip
 const tooltipData = ref(null);
 const tooltipPosition = ref({ x: 0, y: 0 });
 
+// D3 elements
+let svg = null;
+let simulation = null;
+let nodesGroup = null;
+let linksGroup = null;
+let zoom = null;
+
+// Constants
+const LANE_WIDTH = 120;
+const Y_SPACING = 70;
+
 // Branch colors
-const branchColors = {
-  'main': '#3b82f6',
-  'master': '#3b82f6',
-  'develop': '#10b981',
-  'feature': '#f59e0b',
-  'hotfix': '#ef4444',
-  'release': '#8b5cf6',
-  'default': '#6b7280'
+const specialBranches = {
+  'main': { color: '#3b82f6', type: 'main' },
+  'master': { color: '#3b82f6', type: 'main' },
+  'dev': { color: '#10b981', type: 'main' },
+  'develop': { color: '#10b981', type: 'main' },
+  // Explicit colors for demo branches
+  'feature-auth': { color: '#eab308', type: 'user' }, // Yellow
+  'feature-ui': { color: '#ec4899', type: 'user' },   // Pink
+  'feature-api': { color: '#8b5cf6', type: 'user' },  // Purple
+};
+const releaseBranch = { color: '#fbbf24', type: 'release' };
+const userBranchColors = ['#f9a8d4', '#a5b4fc', '#86efac', '#fcd34d', '#c4b5fd', '#67e8f9'];
+
+const getBranchInfo = (branchName) => {
+  if (!branchName) return { color: '#9ca3af', type: 'user' };
+  const name = branchName.toLowerCase();
+  if (specialBranches[name]) return specialBranches[name];
+  if (name.includes('release') || name.startsWith('v')) return releaseBranch;
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return { color: userBranchColors[Math.abs(hash) % userBranchColors.length], type: 'user' };
 };
 
-const getBranchColor = (branchName) => {
-  if (!branchName) return branchColors.default;
-  const prefix = branchName.split('/')[0].toLowerCase();
-  return branchColors[prefix] || branchColors[branchName] || branchColors.default;
+const getNodeRadius = (d) => {
+  const metricValue = d.metrics?.[selectedMetric.value] || 0;
+  // Reduced size: base 6px, max +6px (total 12px)
+  return 6 + metricValue * 6;
 };
 
-// Computed
-const nodeSpacingX = 150;
-const nodeSpacingY = 60;
-
-const positionedCommits = computed(() => {
-  return commits.value.map((commit, index) => {
-    const lane = commit.lane || 0;
-    return {
-      ...commit,
-      x: 100 + lane * nodeSpacingX,
-      y: 50 + index * nodeSpacingY,
-      shortHash: commit.hash?.substring(0, 7) || '',
-      branchColor: getBranchColor(commit.branch),
-      isMerge: commit.parents?.length > 1,
-      isBranchPoint: commit.children?.length > 1
+// ... DATA GENERATOR ...
+// ... DATA GENERATOR ...
+// ... DATA GENERATOR ...
+// ... DATA GENERATOR ...
+const getDemoCommits = () => {
+    const commits = [];
+    const now = Date.now();
+    const genHash = (id) => {
+        const uniquePart = id.toString(16).padStart(8, '0'); 
+        const randomPart = Array(32).fill(0).map((_, i) => ((id + i) % 16).toString(16)).join('');
+        return uniquePart + randomPart;
     };
-  });
-});
+    let currentId = 0xabcdef;
+    
+    // Helper
+    const addCommit = (branch, parents, lane, time, msg, author) => {
+        const hash = genHash(currentId++);
+        const parentHashes = parents ? (Array.isArray(parents) ? parents.map(p => p.hash) : [parents.hash]) : [];
+        
+        const commit = {
+            hash, message: msg, author, id: hash,
+            date: new Date(time).toISOString(), branch, lane,
+            parents: parentHashes,
+            filesChanged: Math.floor(Math.random() * 5) + 1
+        };
+        commits.push(commit);
+        return commit;
+    };
 
-const connectionLines = computed(() => {
-  const lines = [];
-  positionedCommits.value.forEach(commit => {
-    if (commit.parents) {
-      commit.parents.forEach(parentHash => {
-        const parent = positionedCommits.value.find(c => c.hash === parentHash);
-        if (parent) {
-          const isCurved = commit.x !== parent.x;
-          let path;
-          if (isCurved) {
-            const midY = (commit.y + parent.y) / 2;
-            path = `M ${commit.x} ${commit.y} C ${commit.x} ${midY}, ${parent.x} ${midY}, ${parent.x} ${parent.y}`;
-          } else {
-            path = `M ${commit.x} ${commit.y} L ${parent.x} ${parent.y}`;
-          }
-          lines.push({
-            path,
-            color: commit.branchColor
-          });
-        }
-      });
+    // --- SCENARIO: Diamond Merge Workflow ---
+    // A -- B -- C -- D -- E   (Ivan on dev)
+    //            \
+    //             F -- G      (Petr on parallel)
+    //                   \
+    //                    M    (Merge)
+
+    let t = now - 100000000;
+    const hour = 3600000;
+
+    // 1. Common History (A, B, C) on 'dev'
+    const A = addCommit('dev', null, 0, t, 'A: Init project', 'Ivan');
+    const B = addCommit('dev', A,    0, t + hour, 'B: Setup libs', 'Ivan');
+    const C = addCommit('dev', B,    0, t + 2*hour, 'C: Core logic', 'Ivan');
+
+    // 2. Ivan continues on 'dev' (D, E)
+    // Pushed first, so it stays on main line (Lane 0)
+    const D = addCommit('dev', C, 0, t + 3*hour, 'D: feat: Add function 1', 'Ivan');
+    const E = addCommit('dev', D, 0, t + 4*hour, 'E: chore: Update libs', 'Ivan');
+
+    // 3. Petr works in parallel (F, G)
+    // Diverged from C. Branch 'dev-petr' (Lane 1) - simulates Petr's local dev copy
+    const F = addCommit('dev-petr', C, 1, t + 3.5*hour, 'F: docs: Update docs', 'Petr');
+    const G = addCommit('dev-petr', F, 1, t + 4.5*hour, 'G: feat: Add function 2', 'Petr');
+
+    // 4. Merge (M)
+    // Merges Petr's work (G) into Ivan's work (E)
+    // Result is on 'dev' (Lane 0)
+    const M = addCommit('dev', [E, G], 0, t + 6*hour, "M: Merge branch 'feature-petr'", 'Petr');
+
+    return commits.sort((a,b) => new Date(b.date) - new Date(a.date));
+};
+// ... END DATA GENERATOR ...
+
+
+// Filter commits based on selected branch
+const filteredCommits = computed(() => {
+    const target = currentBranch.value;
+    
+    // Overview (Default)
+    if (!target || target === 'all') return commits.value;
+    
+    // Strict Main View
+    if (target === 'main') return commits.value.filter(c => c.branch === 'main');
+    
+    // Smart Dev View (Show Dev + Petr's work)
+    if (target === 'dev') {
+        return commits.value.filter(c => c.branch === 'dev' || c.branch === 'dev-petr');
     }
-  });
-  return lines;
+    
+    // Fallback for any other specific branch
+    return commits.value.filter(c => c.branch === target);
 });
 
-const viewBox = computed(() => {
-  const width = 800 / zoom.value;
-  const height = Math.max(400, commits.value.length * nodeSpacingY + 100) / zoom.value;
-  return `${-panOffset.value.x} ${-panOffset.value.y} ${width} ${height}`;
-});
-
-// Methods
 const loadCommits = async () => {
-  loading.value = true;
-  try {
-    const response = await apiClient.get(versionManagementEndpoints.repositories.commitsList(repoId));
-    if (response.success) {
-      // Add mock data for demo if empty
-      let data = Array.isArray(response.data) ? response.data : (response.data?.results || []);
-      
-      // Assign lanes for visualization
-      data = data.map((commit, idx) => ({
-        ...commit,
-        lane: 0, // TODO: Calculate actual lanes based on branches
-        filesChanged: commit.files_changed || Math.floor(Math.random() * 10) + 1
-      }));
-      
-      commits.value = data;
+    loading.value = true;
+    commits.value = [];
+    debugError.value = '';
+    
+    try {
+        console.log('Loading commits...');
+        const response = await apiClient.get(versionManagementEndpoints.repositories.commitsList(repoId));
+        let data = [];
+        if (response.success && response.data) {
+             data = Array.isArray(response.data) ? response.data : (response.data.results || []);
+        }
+        
+        if (data.length === 0) {
+            console.log('No real commits, loading demo...');
+            data = getDemoCommits();
+        }
+        
+        // Prepare nodes
+        commits.value = data.map(c => ({
+             ...c,
+             id: c.hash || c.id, 
+             shortHash: (c.hash||'').substring(0,7),
+             branchColor: getBranchInfo(c.branch).color,
+             branchType: getBranchInfo(c.branch).type
+        }));
+        
+        // Update branches list for dropdown
+        const uniqueBranches = new Set(commits.value.map(c => c.branch));
+        // Filter out helper branches (like dev-petr) from the UI dropdown
+        const distinctBranches = Array.from(uniqueBranches).filter(b => !b.includes('petr'));
+        branches.value = ['all', ...distinctBranches];
+        if (!currentBranch.value) currentBranch.value = 'all';
+        
+        console.log('Commits loaded:', commits.value.length);
+        
+        await nextTick();
+        initD3Graph();
+        
+    } catch (e) {
+        console.error('Error loading:', e);
+        debugError.value = 'Data Load Error: ' + e.message;
+        // Fallback
+        commits.value = getDemoCommits().map(c => ({
+             ...c, id: c.hash, shortHash: c.hash.substring(0,7),
+             branchColor: getBranchInfo(c.branch).color,
+             branchType: getBranchInfo(c.branch).type
+        }));
+    } finally {
+        // Critical: Set loading to false so v-else renders the container
+        loading.value = false;
+        // Wait for Vue to update DOM
+        await nextTick();
+        // Give a small buffer for heavy rendering
+        setTimeout(initD3Graph, 50);
     }
-  } catch (error) {
-    console.error('Failed to load commits:', error);
-  } finally {
-    loading.value = false;
-  }
 };
 
-const loadBranches = async () => {
-  try {
-    const response = await apiClient.get(versionManagementEndpoints.repositories.branches(repoId));
-    if (response.success && response.data) {
-      branches.value = response.data.map(b => b.name);
-      if (branches.value.length > 0) {
-        currentBranch.value = branches.value[0];
-      }
+const initD3Graph = () => {
+    if (!filteredCommits.value.length) return;
+    
+    // Safety check with retry
+    if (!svgElement.value || !graphContainer.value) {
+        console.warn('DOM not ready, retrying...');
+        setTimeout(initD3Graph, 100);
+        return;
     }
-  } catch (error) {
-    console.error('Failed to load branches:', error);
-  }
+    
+    // reset error if we got here
+    debugError.value = '';
+
+    try {
+        const width = graphContainer.value.clientWidth || 800;
+        const height = graphContainer.value.clientHeight || 800;
+        
+        d3.select(svgElement.value).selectAll('*').remove();
+        svg = d3.select(svgElement.value).attr('width', width).attr('height', height);
+        
+        const g = svg.append('g');
+        zoom = d3.zoom().scaleExtent([0.1, 4]).on('zoom', e => g.attr('transform', e.transform));
+        svg.call(zoom);
+        
+        const nodes = JSON.parse(JSON.stringify(filteredCommits.value));
+        // Calculate initial positions
+        nodes.forEach((n, i) => {
+            n.x = (n.lane || 0) * LANE_WIDTH + 150;
+            n.y = i * Y_SPACING + 100;
+        });
+        
+        const links = [];
+        const nodeMap = new Map(nodes.map(n => [n.id, n]));
+        nodes.forEach(n => {
+            if(n.parents) n.parents.forEach(p => {
+                if(nodeMap.has(p)) links.push({ source: n.id, target: p, color: n.branchColor });
+            });
+        });
+        
+        calculateAllMetrics(nodes, links);
+        console.log('Metrics calculated. Sample node metrics:', nodes[0]?.metrics, 'Total nodes:', nodes.length);
+        
+        // --- STATIC LAYOUT (No Force Simulation) ---
+        // 1. Assign fixed coordinates
+        nodes.forEach((d, i) => {
+            d.x = 100 + (d.lane || 0) * LANE_WIDTH;
+            d.y = 80 + i * Y_SPACING;
+        });
+
+        // 2. Resolve link references manually since we don't have forceLink doing it
+        const resolvedLinks = links.map(l => {
+            const sourceNode = nodeMap.get(l.source);
+            const targetNode = nodeMap.get(l.target);
+            if (!sourceNode || !targetNode) return null;
+            return {
+                ...l,
+                source: sourceNode,
+                target: targetNode
+            };
+        }).filter(l => l !== null);
+
+        // 3. Render Links (Static)
+        linksGroup = g.append('g').selectAll('path')
+            .data(resolvedLinks).enter().append('path')
+            .attr('d', d => {
+                 const sx = d.source.x;
+                 const sy = d.source.y;
+                 const tx = d.target.x;
+                 const ty = d.target.y;
+                 // S-curve for vertical layout
+                 return `M ${sx} ${sy} C ${sx} ${sy + Y_SPACING/2}, ${tx} ${ty - Y_SPACING/2}, ${tx} ${ty}`;
+            })
+            .attr('stroke', d => d.color)
+            .attr('stroke-width', 2)
+            .attr('fill', 'none')
+            .attr('opacity', 0.6);
+            
+        // 4. Render Nodes (Static - No Drag)
+        nodesGroup = g.append('g').selectAll('g')
+            .data(nodes).enter().append('g')
+            .attr('transform', d => `translate(${d.x}, ${d.y})`) 
+            .attr('class', 'node-group')
+            .on('mouseover', function(e, d) {
+                // Target the shape (circle or polygon)
+                d3.select(this).select('.node-shape').classed('node-hovered', true);
+                showTooltip(d, e);
+            })
+            .on('mouseout', function() {
+                d3.select(this).select('.node-shape').classed('node-hovered', false);
+                hideTooltip();
+            })
+            .on('click', (event, d) => router.push({ name: 'CommitDetail', params: { id: repoId, hash: d.hash } }));
+            
+        // Use 'each' to handle different shapes based on data
+        nodesGroup.each(function(d) {
+            const el = d3.select(this);
+            const r = getNodeRadius(d);
+            const isMerge = d.parents && d.parents.length > 1;
+            
+            if (isMerge) {
+                // Render Octagon (Solid filled - same color as branch)
+                const points = [];
+                for(let i = 0; i < 8; i++) {
+                    const angle = (i * 45 + 22.5) * (Math.PI / 180); 
+                    points.push([r * Math.cos(angle), r * Math.sin(angle)]);
+                }
+                el.append('polygon')
+                    .attr('points', points.map(p => p.join(',')).join(' '))
+                    .attr('fill', d.branchColor) // Solid fill with branch color
+                    .attr('stroke', 'none')
+                    .attr('class', 'node-shape');
+            } else {
+                // Render Circle (Filled, no white stroke)
+                el.append('circle')
+                    .attr('r', r)
+                    .attr('fill', d.branchColor)
+                    .attr('stroke', 'none') // No white border
+                    .attr('class', 'node-shape');
+            }
+        });
+            
+        nodesGroup.append('text')
+            .text(d => d.shortHash)
+            .attr('dx', 18)
+            .attr('dy', 4)
+            .attr('fill', '#999')
+            .style('font-family', 'monospace')
+            .style('font-size', '11px');
+            
+        // No simulation.on('tick') needed!
+        
+        // Center View
+        const initialTransform = d3.zoomIdentity.translate(50, 50).scale(1);
+        svg.call(zoom.transform, initialTransform);
+        
+    } catch (e) {
+        console.error('D3 Init Error:', e);
+        debugError.value = 'D3 Error: ' + e.message;
+    }
 };
 
-const goToCommit = (commit) => {
-  router.push({ 
-    name: 'CommitDetail', 
-    params: { id: repoId, hash: commit.hash } 
-  });
+// Drag & Zoom helpers
+const dragStart = (e, d) => { if(!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; };
+const dragging = (e, d) => { d.fx = e.x; d.fy = e.y; };
+const dragEnd = (e, d) => { if(!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; };
+const resetSimulation = () => simulation && simulation.alpha(1).restart();
+const centerGraph = () => svg && svg.transition().duration(750).call(zoom.transform, d3.zoomIdentity.translate(width/2 - 200, 50).scale(1.2));
+const showTooltip = (d, e) => { tooltipData.value = d; tooltipPosition.value = { x: e.clientX+15, y: e.clientY-10 }; };
+const hideTooltip = () => tooltipData.value = null;
+const formatMetric = v => v ? (v*100).toFixed(1)+'%' : '-';
+const formatDate = d => new Date(d).toLocaleDateString();
+
+const updateNodeVisuals = () => {
+    if (!svg) return;
+    
+    // Update circles (normal commits)
+    svg.selectAll('.node-group circle.node-shape')
+       .transition().duration(500)
+       .attr('r', d => getNodeRadius(d));
+    
+    // Update polygons (merge commits) - recalculate points
+    svg.selectAll('.node-group polygon.node-shape')
+       .transition().duration(500)
+       .attr('points', d => {
+           const r = getNodeRadius(d);
+           const pts = [];
+           for(let i = 0; i < 8; i++) {
+               const angle = (i * 45 + 22.5) * (Math.PI / 180); 
+               pts.push([r * Math.cos(angle), r * Math.sin(angle)]);
+           }
+           return pts.map(p => p.join(',')).join(' ');
+       });
 };
 
-const showTooltip = (commit, event) => {
-  tooltipData.value = commit;
-  tooltipPosition.value = {
-    x: event.clientX + 15,
-    y: event.clientY - 10
-  };
-};
-
-const hideTooltip = () => {
-  tooltipData.value = null;
-};
-
-const formatDate = (dateString) => {
-  if (!dateString) return '';
-  const date = new Date(dateString);
-  const now = new Date();
-  const diff = now - date;
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-  
-  if (days === 0) return 'Сегодня';
-  if (days === 1) return 'Вчера';
-  if (days < 7) return `${days} дней назад`;
-  return date.toLocaleDateString('ru-RU');
-};
-
-// Zoom & Pan
-const zoomIn = () => { zoom.value = Math.min(zoom.value * 1.2, 3); };
-const zoomOut = () => { zoom.value = Math.max(zoom.value / 1.2, 0.3); };
-const resetZoom = () => { zoom.value = 1; panOffset.value = { x: 0, y: 0 }; };
-
-const handleWheel = (e) => {
-  if (e.deltaY < 0) zoomIn();
-  else zoomOut();
-};
-
-const startPan = (e) => {
-  isPanning.value = true;
-  panStart.value = { x: e.clientX - panOffset.value.x, y: e.clientY - panOffset.value.y };
-};
-
-const doPan = (e) => {
-  if (!isPanning.value) return;
-  panOffset.value = {
-    x: e.clientX - panStart.value.x,
-    y: e.clientY - panStart.value.y
-  };
-};
-
-const endPan = () => {
-  isPanning.value = false;
-};
-
-// Lifecycle
-onMounted(() => {
-  loadBranches();
-  loadCommits();
+watch(selectedMetric, () => {
+    updateNodeVisuals(); // Smooth transition for metric changes
 });
+
+watch(currentBranch, () => {
+    initD3Graph(); // Re-build graph when branch changes
+});
+
+onMounted(() => {
+    loadCommits();
+    window.addEventListener('resize', () => initD3Graph());
+});
+onUnmounted(() => window.removeEventListener('resize', () => initD3Graph()));
 </script>
 
 <style scoped>
-.commit-graph-page {
-  padding: 20px;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
+/* Full screen layout */
+.commit-graph-page { 
+    position: relative; /* Back to normal flow to respect sidebar */
+    width: 100%;
+    height: 90vh; /* Fill most of the screen */
+    max-height: 100vh;
+    padding: 0; 
+    display: flex; 
+    flex-direction: column; 
+    overflow: hidden; /* Prevent scrolling */
+    background-color: #18181a; /* New requested color */
+    border-radius: 8px; /* Slight radius for aesthetic */
 }
 
-.graph-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-  flex-wrap: wrap;
-  gap: 15px;
+.graph-header { 
+    display: flex; 
+    justify-content: space-between; 
+    align-items: center; 
+    padding: 15px 20px; 
+    background-color: #18181a; /* Match background */
+    border-bottom: 1px solid rgba(255,255,255,0.05); /* Softer border */
+    z-index: 10;
 }
 
-.graph-controls {
-  display: flex;
-  align-items: center;
-  gap: 15px;
+.graph-controls { display: flex; gap: 10px; }
+
+.graph-container { 
+    flex: 1; 
+    width: 100%;
+    background: transparent; 
+    position: relative; 
+    overflow: hidden;
 }
 
-.zoom-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: #f8f9fa;
-  padding: 5px 10px;
-  border-radius: 8px;
+/* Tooltip & Legend */
+.commit-tooltip { position: fixed; background: #222; padding: 12px; border-radius: 8px; z-index: 9999; color: #fff; pointer-events: none; border: 1px solid #444; min-width: 180px; }
+.tooltip-header { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.tooltip-hash { font-family: monospace; font-size: 0.85rem; }
+.tooltip-branch { padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; color: #fff; }
+.tooltip-message { font-size: 0.9rem; margin-bottom: 8px; color: #ddd; }
+.tooltip-metrics { display: grid; grid-template-columns: auto auto; gap: 2px 12px; font-size: 0.8rem; margin-bottom: 8px; }
+.metric-label { color: #888; }
+.metric-value { color: #fff; }
+.tooltip-meta { border-top: 1px solid #444; padding-top: 8px; margin-top: 4px; }
+.tooltip-author { font-weight: 500; margin-bottom: 2px; }
+.tooltip-date { font-size: 0.8rem; color: #888; }
+.metric-row { display: flex; justify-content: space-between; font-size: 0.8rem; width: 200px; }
+
+/* NODE ANIMATIONS - Must use :deep() because D3 creates these elements outside Vue */
+:deep(.node-shape) {
+    transition: all 0.3s ease;
+    cursor: pointer;
+    transform-box: fill-box; /* Critical for SVG transforms */
+    transform-origin: center;
+    /* Subtle breathing animation for all nodes */
+    animation: bubble-float 3s ease-in-out infinite;
 }
 
-.zoom-level {
-  min-width: 50px;
-  text-align: center;
-  font-size: 0.85rem;
-  color: #666;
+/* Subtle floating/breathing for all nodes */
+@keyframes bubble-float {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.08); }
 }
 
-.graph-container {
-  flex: 1;
-  background: linear-gradient(135deg, #1a1d21 0%, #2d3439 100%);
-  border-radius: 12px;
-  overflow: hidden;
-  position: relative;
-  min-height: 500px;
+/* Hover - Strong Glow & Wobble */
+:deep(.node-hovered) {
+    /* Subtle glow effect */
+    filter: drop-shadow(0 0 6px currentColor) drop-shadow(0 0 10px rgba(255, 255, 255, 0.4)); 
+    /* More pronounced wobble animation on hover */
+    animation: bubble-wobble 0.6s ease-in-out infinite !important; 
 }
 
-.commit-graph-svg {
-  width: 100%;
-  height: 100%;
+@keyframes bubble-wobble {
+  0% { transform: scale(1); }
+  25% { transform: scale(1.3); }
+  50% { transform: scale(0.9); }
+  75% { transform: scale(1.2); }
+  100% { transform: scale(1); }
 }
 
-.loading-container {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 400px;
-}
-
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  height: 300px;
-}
-
-/* Commit Node Styles */
-.commit-node-group {
-  cursor: pointer;
-  transition: transform 0.2s ease;
-}
-
-.commit-node-group:hover {
-  transform: scale(1.1);
-}
-
-.commit-node {
-  transition: all 0.3s ease;
-  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
-}
-
-.commit-node-group:hover .commit-node {
-  animation: wobble 0.5s ease-in-out;
-  filter: drop-shadow(0 4px 12px rgba(0,0,0,0.5));
-}
-
-@keyframes wobble {
-  0%, 100% { transform: rotate(0deg) scale(1); }
-  20% { transform: rotate(-8deg) scale(1.1); }
-  40% { transform: rotate(6deg) scale(1.1); }
-  60% { transform: rotate(-4deg) scale(1.1); }
-  80% { transform: rotate(2deg) scale(1.1); }
-}
-
-.merge-node {
-  filter: drop-shadow(0 0 8px rgba(255,255,255,0.5));
-}
-
-.branch-point {
-  filter: drop-shadow(0 0 12px currentColor);
-}
-
-.commit-label {
-  font-size: 11px;
-  font-family: 'Consolas', 'Monaco', monospace;
-  font-weight: 600;
-}
-
-.connection-line {
-  opacity: 0.6;
-  transition: opacity 0.2s;
-}
-
-/* Tooltip */
-.commit-tooltip {
-  position: fixed;
-  background: rgba(30, 35, 40, 0.95);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 10px;
-  padding: 12px 16px;
-  min-width: 250px;
-  max-width: 350px;
-  z-index: 1000;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-  animation: tooltipFadeIn 0.2s ease;
-}
-
-@keyframes tooltipFadeIn {
-  from { opacity: 0; transform: translateY(-5px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.tooltip-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.tooltip-hash {
-  font-family: 'Consolas', monospace;
-  color: #3b82f6;
-  font-weight: 600;
-}
-
-.tooltip-files {
-  background: rgba(59, 130, 246, 0.2);
-  color: #60a5fa;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 0.75rem;
-}
-
-.tooltip-message {
-  color: #fff;
-  font-size: 0.9rem;
-  margin-bottom: 8px;
-  line-height: 1.4;
-  word-break: break-word;
-}
-
-.tooltip-meta {
-  display: flex;
-  gap: 15px;
-  font-size: 0.8rem;
-  color: #9ca3af;
-}
-
-.tooltip-meta i {
-  margin-right: 4px;
-}
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 5px; }
+.graph-legend { margin-top: 10px; color: #aaa; font-size: 14px; position: absolute; bottom: 20px; left: 20px; z-index: 100;}
 </style>
