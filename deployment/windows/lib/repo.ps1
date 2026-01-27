@@ -496,7 +496,7 @@ function Get-CommitAuthor {
     Write-Host "[DEBUG] Не удалось получить пользователя через API: $_" -ForegroundColor Gray
   }
   
-  # 2. Пробуем получить из переменных окружения
+  # 2. Пробуем получить из переменных окружения (Windows)
   if ($env:USERNAME) {
     return $env:USERNAME
   }
@@ -504,15 +504,32 @@ function Get-CommitAuthor {
     return $env:USER
   }
   
-  # 3. Пробуем получить из системы
+  # 3. Пробуем получить из системы через .NET
   try {
-    return $env:UserName
+    $userName = [System.Environment]::UserName
+    if ($userName) {
+      return $userName
+    }
   }
   catch {
-    Write-Host "[DEBUG] Не удалось получить имя пользователя системы" -ForegroundColor Gray
+    Write-Host "[DEBUG] Не удалось получить имя пользователя через .NET: $_" -ForegroundColor Gray
   }
   
-  # 4. Возвращаем Unknown
+  # 4. Пробуем получить через WMI (Windows Management Instrumentation)
+  try {
+    $userName = (Get-WmiObject -Class Win32_ComputerSystem).UserName
+    if ($userName) {
+      # Извлекаем только имя пользователя из формата "DOMAIN\username"
+      $userName = $userName.Split('\')[-1]
+      return $userName
+    }
+  }
+  catch {
+    Write-Host "[DEBUG] Не удалось получить имя пользователя через WMI: $_" -ForegroundColor Gray
+  }
+  
+  # 5. Возвращаем Unknown
+  Write-Host "[WARNING] Не удалось определить имя пользователя, используется 'Unknown'" -ForegroundColor Yellow
   return "Unknown"
 }
 
