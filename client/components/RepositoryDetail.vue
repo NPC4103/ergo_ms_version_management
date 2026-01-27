@@ -24,6 +24,12 @@
             <li v-for="branch in branches" :key="branch.name">
               <a class="dropdown-item" href="#" @click.prevent="selectBranch(branch.name)">{{ branch.name }}</a>
             </li>
+            <li class="border-top my-1"></li>
+            <li>
+                <router-link :to="{ name: 'BranchList', params: { id: repoId } }" class="dropdown-item d-flex align-items-center gap-2 text-primary" @click="closeMenu">
+                    <Settings :size="14" /> Управление ветками
+                </router-link>
+            </li>
           </ul>
         </div>
         <!-- Create Branch Button -->
@@ -75,9 +81,8 @@
             <transition name="dropdown-anim">
                 <div class="actions-dropdown" v-if="showActionsMenu" @click.stop>
                   <div class="actions-content" :class="{ blurred: activeSubmenu }">
-                    <div class="action-item" @click="openSubmenu('files')">
-                        <span class="d-flex align-items-center gap-2"><Folder :size="16" /> Файлы</span>
-                        <span class="arrow">›</span>
+                    <div class="action-item" @click="uploadFile">
+                        <span class="d-flex align-items-center gap-2"><FilePlus :size="16" /> Добавить файл</span>
                     </div>
                     <div class="action-item" @click="goToCommitGraph">
                         <span class="d-flex align-items-center gap-2"><History :size="16" /> История коммитов</span>
@@ -87,17 +92,6 @@
                     </div>
                     <div class="action-item" @click="goToSettings">
                         <span class="d-flex align-items-center gap-2"><Settings :size="16" /> Настройки</span>
-                    </div>
-                  </div>
-    
-                  <!-- Submenu Files -->
-                  <div class="submenu" :class="{ visible: activeSubmenu === 'files' }">
-                    <div class="submenu-header" @click="closeSubmenu">‹ Файлы</div>
-                    <div class="action-item" @click="createNewFile">
-                        <span class="d-flex align-items-center gap-2"><FilePlus :size="16" /> Создать файл</span>
-                    </div>
-                    <div class="action-item" @click="uploadFile">
-                        <span class="d-flex align-items-center gap-2"><Upload :size="16" /> Загрузить файл</span>
                     </div>
                   </div>
                 </div>
@@ -133,7 +127,7 @@
 
         <div class="stat-divider"></div>
 
-        <div class="stat-item">
+        <router-link :to="{ name: 'BranchList', params: { id: repoId } }" class="stat-item text-decoration-none text-reset">
           <div class="stat-icon">
             <GitBranch :size="20" />
           </div>
@@ -141,7 +135,7 @@
             <div class="stat-label">Активных веток</div>
             <div class="stat-value">{{ branches.length }}</div>
           </div>
-        </div>
+        </router-link>
 
         <div class="stat-divider"></div>
 
@@ -157,14 +151,32 @@
       </div>
     </div>
 
+    <!-- Breadcrumbs -->
+    <div class="breadcrumbs-bar card mb-3 p-2 d-flex align-items-center">
+        <router-link :to="{ name: 'RepositoryFiles', params: { id: repoId } }" class="btn btn-sm btn-link text-decoration-none d-flex align-items-center gap-1 text-muted nav-folder-btn">
+            <Folder :size="16" />
+        </router-link>
+        <span v-if="currentPath" class="text-muted mx-1">/</span>
+        <template v-for="(part, index) in currentPath.split('/').filter(Boolean)" :key="index">
+            <span class="breadcrumb-item" @click="navigateDir(part, index)">{{ part }}</span>
+            <span v-if="index < currentPath.split('/').filter(Boolean).length - 1" class="text-muted mx-1">/</span>
+        </template>
+    </div>
+
     <!-- File Manager -->
-    <div class="scroll-wrapper card">
+    <div class="scroll-wrapper card" 
+         @dragover.prevent="dragActive = true" 
+         @dragleave.prevent="dragActive = false" 
+         @drop.prevent="handleDrop"
+         :class="{ 'border-primary border-2': dragActive }">
+      <input type="file" ref="fileInput" class="d-none" multiple @change="handleFileUpload">
       <div class="scroll-red-bar"></div>
       <div class="scroll-body" :class="{ expanded: isExpanded }">
         <div class="files-container" :class="{ 'visible': isExpanded }">
           <!-- File List -->
           <div v-for="(item, index) in sortedFiles" :key="item.name" class="file-row"
-               :style="{ transitionDelay: `${index * 0.05}s` }">
+               :style="{ transitionDelay: `${index * 0.05}s` }"
+               @click="handleFileClick(item)">
             <div class="file-name">
                 <Folder v-if="item.type === 'dir'" :size="16" class="text-warning" />
                 <FileText v-else :size="16" class="file-icon" />
@@ -189,6 +201,19 @@
       <div class="toggle-btn" @click="toggleScroll" :class="{ rotated: isExpanded }">
         <ChevronDown :size="16" color="white" />
       </div>
+    </div>
+
+    <!-- README Preview -->
+    <div class="readme-section card mt-4" v-if="readmeContent">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h6 class="m-0 d-flex align-items-center gap-2"><FileText :size="16" /> README.md</h6>
+            <button class="btn btn-sm btn-outline-secondary" @click="openEditModal('README.md')">
+                <Edit2 :size="14" />
+            </button>
+        </div>
+        <div class="card-body">
+            <div class="readme-content" v-html="renderMarkdown(readmeContent)"></div>
+        </div>
     </div>
 
     <!-- Modals -->
@@ -251,6 +276,25 @@
         </div>
     </div>
 
+    <!-- Edit File Modal -->
+    <div class="modal-overlay" v-if="showEditFileModal" @click.self="showEditFileModal = false">
+        <div class="modal-container" style="max-width: 900px; height: 80vh;">
+            <div class="modal-header">
+                <h4>Редактирование {{ editingFile.path }}</h4>
+                <button class="modal-close" @click="showEditFileModal = false"><X :size="24" /></button>
+            </div>
+            <div class="modal-body d-flex flex-column h-100">
+                <textarea class="form-control bg-dark text-white border-secondary flex-grow-1 mb-3" 
+                          style="font-family: monospace;"
+                          v-model="editingFile.content"></textarea>
+                <div class="d-flex justify-content-end gap-2">
+                    <button class="btn btn-secondary" @click="showEditFileModal = false">Отмена</button>
+                    <button class="btn btn-success" @click="saveFile">Сохранить</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
   </div>
   <div v-else-if="loading" class="p-4 text-center">Загрузка...</div>
   <div v-else class="p-4 text-center text-danger">Репозиторий не найден</div>
@@ -265,7 +309,8 @@ import { useToast } from 'vue-toastification';
 import CommitList from './CommitList.vue';
 import { 
     ArrowLeft, GitBranch, Folder, FileText, History, Link, Settings, 
-    FilePlus, Upload, ChevronDown, FolderOpen, X, Tag, Download, BarChart3, Plus
+    FilePlus, Upload, ChevronDown, FolderOpen, X, Tag, Download, BarChart3, Plus,
+    Edit2
 } from 'lucide-vue-next';
 
 const route = useRoute();
@@ -295,10 +340,18 @@ const baseBranch = ref('main');
 
 const branches = ref([{ name: 'main' }]);
 const currentBranch = ref('main');
+const currentPath = ref('');
 const files = ref([]); 
 const commits = ref([]);
 const releases = ref([]);
 const newRelease = ref({ tag_name: '', name: '', body: '' });
+const fileInput = ref(null);
+const dragActive = ref(false);
+
+// Readme & Editing
+const readmeContent = ref(null);
+const showEditFileModal = ref(false);
+const editingFile = ref({ path: '', content: '' });
 
 const sortedFiles = computed(() => [...files.value].sort((a, b) => {
   if (a.type === 'dir' && b.type !== 'dir') return -1;
@@ -312,12 +365,56 @@ const openSubmenu = (n) => { activeSubmenu.value = n; };
 const closeSubmenu = () => { activeSubmenu.value = null; };
 const closeMenu = () => { showActionsMenu.value = false; showReleases.value = false; activeSubmenu.value = null; };
 const toggleScroll = () => { isExpanded.value = !isExpanded.value; };
-const selectBranch = async (n) => { currentBranch.value = n; await loadBranchFiles(); };
+const selectBranch = async (n) => { currentBranch.value = n; currentPath.value = ''; await loadBranchFiles(); };
 const copyCloneUrl = () => { navigator.clipboard.writeText(`${window.location.origin}/versionmanagement/repo/${repo.value?.public_id}`); toast.success('Ссылка скопирована!'); closeMenu(); };
 const createNewFile = () => { toast.info('Создание файла...'); closeMenu(); };
-const uploadFile = () => { toast.info('Загрузка файлов...'); closeMenu(); };
+
+const uploadFile = () => { 
+    closeMenu(); 
+    if (fileInput.value) fileInput.value.click(); 
+};
+
+const handleFileUpload = (event) => {
+    const selectedFiles = event.target.files;
+    if (selectedFiles.length > 0) uploadFiles(selectedFiles);
+    event.target.value = ''; // Reset input
+};
+
+const handleDrop = (event) => {
+    dragActive.value = false;
+    const droppedFiles = event.dataTransfer.files;
+    if (droppedFiles.length > 0) uploadFiles(droppedFiles);
+};
+
+const uploadFiles = async (fileList) => {
+    const uploadPromises = Array.from(fileList).map(async (file) => {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('path', currentPath.value);
+
+        try {
+            const response = await apiClient.post(versionManagementEndpoints.repositories.uploadFile(repo.value.public_id, currentBranch.value), formData);
+            if (response.success) {
+                toast.success(`Файл ${file.name} загружен`);
+                return true;
+            } else {
+                toast.error(`Ошибка загрузки ${file.name}: ${response.message || 'Error'}`);
+                return false;
+            }
+        } catch (e) {
+            console.error(e);
+            toast.error(`Ошибка сети при загрузке ${file.name}`);
+            return false;
+        }
+    });
+
+    await Promise.all(uploadPromises);
+    await loadBranchFiles();
+};
+
 const goToSettings = () => { closeMenu(); router.push({ name: 'RepositorySettings', params: { id: repoId } }); };
 const goToCommitGraph = () => { closeMenu(); router.push({ name: 'CommitGraph', params: { id: repoId } }); };
+const goToBranchList = () => { closeMenu(); router.push({ name: 'BranchList', params: { id: repoId } }); };
 
 // Branch creation
 const openCreateBranchModal = () => { showCreateBranchModal.value = true; baseBranch.value = currentBranch.value; };
@@ -327,7 +424,7 @@ const createBranch = async () => {
     try {
         const response = await apiClient.post(versionManagementEndpoints.branches.create, {
             name: newBranchName.value.trim(),
-            repository: repo.value.id,
+            repository_public_id: repo.value.public_id,
             source_branch: baseBranch.value
         });
         if (response.success) {
@@ -395,16 +492,94 @@ const loadBranches = async () => {
 const loadBranchFiles = async () => {
   try {
     const response = await apiClient.get(
-      versionManagementEndpoints.repositories.branchFiles(repoId, currentBranch.value)
+      versionManagementEndpoints.repositories.branchFiles(repoId, currentBranch.value) + `?path=${currentPath.value}`
     );
     if (response.success && response.data) {
       // Filter out commit.json files
       files.value = response.data.filter(f => f.name !== 'commit.json');
+      
+      // Try to find README if we are in root or just check file list
+      const readme = files.value.find(f => f.name.toLowerCase() === 'readme.md');
+      if (readme) {
+          loadReadme(readme.path); // Use path from API
+      } else {
+          readmeContent.value = null;
+      }
     }
   } catch (e) { 
     console.error('Error loading branch files:', e); 
     files.value = [];
+    readmeContent.value = null;
   }
+};
+
+const navigateDir = (part, index) => {
+    isExpanded.value = true;
+    if (part === '') {
+        currentPath.value = '';
+    } else {
+        // Reconstruct path from breadcrumbs
+        const parts = currentPath.value.split('/').filter(Boolean);
+        currentPath.value = parts.slice(0, index + 1).join('/');
+    }
+    loadBranchFiles();
+};
+
+const handleFileClick = (item) => {
+    if (item.type === 'dir') {
+        currentPath.value = item.path;
+        loadBranchFiles();
+    } else {
+        openEditModal(item.path); // Open viewer/editor
+    }
+};
+
+const loadReadme = async (path) => {
+    try {
+        const response = await apiClient.get(
+            versionManagementEndpoints.repositories.fileContent(repoId, currentBranch.value) + `?path=${path}`
+        );
+        if (response.success) {
+            readmeContent.value = response.data.content;
+        }
+    } catch (e) { console.error('Error loading readme:', e); }
+};
+
+const openEditModal = async (path) => {
+    try {
+        const response = await apiClient.get(
+            versionManagementEndpoints.repositories.fileContent(repoId, currentBranch.value) + `?path=${path}`
+        );
+        if (response.success) {
+            editingFile.value = { path: path, content: response.data.content };
+            showEditFileModal.value = true;
+        }
+    } catch (e) { toast.error('Ошибка загрузки файла'); }
+};
+
+const saveFile = async () => {
+    try {
+        const response = await apiClient.post(
+            versionManagementEndpoints.repositories.fileUpdate(repoId, currentBranch.value),
+            editingFile.value
+        );
+        if (response.success) {
+            toast.success('Файл сохранен');
+            showEditFileModal.value = false;
+            if (editingFile.value.path.toLowerCase().endsWith('readme.md')) {
+                loadReadme(editingFile.value.path);
+            }
+        } else {
+            toast.error(response.message || 'Ошибка сохранения');
+        }
+    } catch (e) { toast.error('Ошибка сети'); }
+};
+
+const renderMarkdown = (text) => {
+    // Simple mock or use library if available. For now just returning text or simple replacement
+    // In real app we should use marked.parse(text)
+    if (!text) return '';
+    return text.replace(/\n/g, '<br>'); // Very basic backup
 };
 </script>
 
@@ -449,6 +624,12 @@ h1 { margin: 0; }
     background-color: #dc2626 !important;
     color: #ffffff !important;
     border-color: #dc2626 !important;
+}
+.nav-folder-btn:hover {
+    color: #dc2626 !important;
+}
+.nav-folder-btn svg {
+    transition: color 0.2s;
 }
 
 /* Metrics Button */
@@ -594,8 +775,8 @@ h1 { margin: 0; }
 }
 
 /* Modal */
-.modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 2000; }
-.modal-container { background: var(--bs-card-bg); border: 1px solid #dc2626; border-radius: 12px; width: 90%; max-width: 700px; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; }
+.modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 2000; backdrop-filter: blur(4px); }
+.modal-container { background: var(--bs-body-bg); border: 1px solid #dc2626; border-radius: 12px; width: 90%; max-width: 700px; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
 .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--bs-border-color); }
 .modal-close { background: none; border: none; cursor: pointer; }
 .modal-close:hover { opacity: 0.7; }

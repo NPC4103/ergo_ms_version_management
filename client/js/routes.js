@@ -80,6 +80,22 @@ export default {
                     title: 'Метрики репозитория',
                 },
             },
+            {
+                path: 'repo/:id/branches',
+                name: 'BranchList',
+                component: '@/modules/version_management/client/components/BranchList.vue',
+                meta: {
+                    title: 'Управление ветками',
+                },
+            },
+            {
+                path: 'repo/:id/files',
+                name: 'RepositoryFiles',
+                component: '@/modules/version_management/client/components/RepositoryFiles.vue',
+                meta: {
+                    title: 'Проводник файлов',
+                },
+            },
         ],
     },
 };

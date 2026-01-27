@@ -26,7 +26,8 @@ from .serializers import (
     SetDefaultBranchSerializer,
     BranchListSerializer,
     CollaboratorSerializer,
-    CollaboratorCreateSerializer
+    CollaboratorCreateSerializer,
+    FileUploadSerializer
 )
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
@@ -642,33 +643,173 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                     commits.sort(key=lambda x: x[0], reverse=True)
                     target_dirs.append(commits[0][1])
 
+            # Если передан параметр path, идем в подпапку
+            request_path = request.query_params.get('path', '').strip('/')
+            
             files_map = {}
             for d in target_dirs:
                 if not os.path.exists(d): continue
                 
-                for item in os.listdir(d):
+                # Если запрошен путь, добавляем его к базовой папке
+                search_dir = os.path.join(d, request_path) if request_path else d
+                
+                if not os.path.exists(search_dir) or not os.path.isdir(search_dir):
+                    continue
+                
+                for item in os.listdir(search_dir):
                     if item in ['commit.json', 'pending_commit.json', 'commits', '.repo_info.json', '.git']:
                         continue
                         
-                    item_path = os.path.join(d, item)
+                    item_path = os.path.join(search_dir, item)
                     is_dir = os.path.isdir(item_path)
+                    
+                    # Формируем относительный путь для фронтенда
+                    rel_path = os.path.join(request_path, item).replace('\\', '/')
                     
                     # Добавляем или перезаписываем (приоритет у последнего, т.е. коммита)
                     files_map[item] = {
                         'name': item,
-                        'path': item,
+                        'path': rel_path,
                         'type': 'dir' if is_dir else 'file',
                         'size': os.path.getsize(item_path) if not is_dir else 0,
                         'last_date': datetime.fromtimestamp(os.path.getmtime(item_path)).strftime('%Y-%m-%d %H:%M')
                     }
 
             files_list = list(files_map.values())
-            files_list.sort(key=lambda x: x['name'])
+            files_list.sort(key=lambda x: (x['type'] != 'dir', x['name'])) # Сначала папки
 
             return Response(files_list, status=status.HTTP_200_OK)
 
         except Exception as e:
             print(f"Error getting branch files: {e}")
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['get'], url_path=r'branches/(?P<branch_name>[^/]+)/file/content')
+    def get_file_content(self, request, public_id=None, branch_name=None):
+        """
+        Получить содержимое файла.
+        GET /api/repositories/{id}/branches/{branch_name}/file/content/?path=path/to/file.ext
+        """
+        repository = self.get_object()
+        repo_uuid = str(repository.public_id)
+        file_path_param = request.query_params.get('path', '')
+        
+        if not file_path_param:
+             return Response({'error': 'Parameter "path" is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            base_path = os.path.join(MEDIA_ROOT, 'version_management', repo_uuid)
+            branch_path = os.path.join(base_path, 'branches', branch_name)
+            
+            # Стратегия поиска файла:
+            # 1. Сначала в последнем коммите
+            # 2. Потом в корне ветки
+            
+            target_file_path = None
+            
+            # Поиск в коммитах
+            commits_path = os.path.join(branch_path, 'commits')
+            if os.path.exists(commits_path) and os.path.isdir(commits_path):
+                commits = []
+                for commit_dir in os.listdir(commits_path):
+                    full_path = os.path.join(commits_path, commit_dir)
+                    if os.path.isdir(full_path):
+                        commits.append((os.path.getmtime(full_path), full_path))
+                
+                if commits:
+                    commits.sort(key=lambda x: x[0], reverse=True)
+                    latest_commit_dir = commits[0][1]
+                    candidate = os.path.join(latest_commit_dir, file_path_param)
+                    if os.path.exists(candidate) and os.path.isfile(candidate):
+                        target_file_path = candidate
+            
+            # Если не нашли в коммите, ищем в корне ветки
+            if not target_file_path:
+                candidate = os.path.join(branch_path, file_path_param)
+                if os.path.exists(candidate) and os.path.isfile(candidate):
+                    target_file_path = candidate
+            
+            if not target_file_path or not os.path.exists(target_file_path):
+                return Response({'error': 'File not found'}, status=status.HTTP_404_NOT_FOUND)
+                
+            # Читаем файл
+            # Простая защита от выхода за пределы папки (basic path traversal check)
+            if not os.path.abspath(target_file_path).startswith(os.path.abspath(base_path)):
+                 return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
+
+            with open(target_file_path, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read()
+                
+            return Response({'content': content}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            print(f"Error reading file content: {e}")
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['post'], url_path=r'branches/(?P<branch_name>[^/]+)/file/update')
+    def update_file_content(self, request, public_id=None, branch_name=None):
+        """
+        Обновить содержимое файла (сохранить изменения).
+        POST /api/repositories/{id}/branches/{branch_name}/file/update/
+        Body: { "path": "README.md", "content": "New content" }
+        """
+        repository = self.get_object()
+        repo_uuid = str(repository.public_id)
+        
+        path_param = request.data.get('path')
+        content = request.data.get('content')
+        
+        if not path_param or content is None:
+             return Response({'error': 'Fields "path" and "content" are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            base_path = os.path.join(MEDIA_ROOT, 'version_management', repo_uuid)
+            branch_path = os.path.join(base_path, 'branches', branch_name)
+            
+            # Определяем, куда писать.
+            # Если файл существует в корне (например README.md), пишем туда.
+            # Иначе пишем в папку последнего коммита (для кода).
+            # В идеале нужно делать новый коммит, но пока делаем прямое редактирование (WIP).
+            
+            target_path = os.path.join(branch_path, path_param)
+            
+            # Если файл уже есть в корне ветки -> обновляем его
+            if os.path.exists(target_path):
+                pass
+            else:
+                # Иначе пытаемся найти последний коммит
+                commits_path = os.path.join(branch_path, 'commits')
+                latest_commit_dir = None
+                if os.path.exists(commits_path) and os.path.isdir(commits_path):
+                    commits = []
+                    for commit_dir in os.listdir(commits_path):
+                        full_path = os.path.join(commits_path, commit_dir)
+                        if os.path.isdir(full_path):
+                            commits.append((os.path.getmtime(full_path), full_path))
+                    if commits:
+                        commits.sort(key=lambda x: x[0], reverse=True)
+                        latest_commit_dir = commits[0][1]
+                
+                if latest_commit_dir:
+                    target_path = os.path.join(latest_commit_dir, path_param)
+                else:
+                    # Если коммитов нет, пишем в корень
+                    target_path = os.path.join(branch_path, path_param)
+            
+            # Создаем директории если надо
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            
+            # Защита путей
+            if not os.path.abspath(target_path).startswith(os.path.abspath(base_path)):
+                 return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
+
+            with open(target_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+                
+            return Response({'success': True, 'message': 'File updated'}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            print(f"Error updating file content: {e}")
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=True, methods=['get'], url_path=r'commits/(?P<commit_hash>[^/.]+)')
@@ -1035,6 +1176,19 @@ class RepositoryViewSet(viewsets.ModelViewSet):
             'collaborator': serializer.data
         })
 
+    @action(detail=True, methods=['get'])
+    def branches(self, request, public_id=None):
+        """
+        Получение списка веток репозитория.
+        """
+        repository = self.get_object()
+        branches = repository.branches.all().order_by('-is_default', 'name')
+        
+        # Используем сериализатор для списка веток
+        serializer = BranchListSerializer(branches, many=True)
+        
+        return Response(serializer.data)
+
     @action(detail=True, methods=['get'], url_path='files')
     def get_files(self, request, public_id=None):
 
@@ -1187,6 +1341,7 @@ class BranchViewSet(viewsets.ModelViewSet):
     
     def destroy(self, request, *args, **kwargs):
         """Удаление ветки с проверкой прав"""
+        print(f"--- [DEBUG] Branch destroy called for id: {kwargs.get('pk')} ---")
         branch = self.get_object()
         
         # Проверяем права на изменение репозитория
@@ -1277,6 +1432,43 @@ class BranchViewSet(viewsets.ModelViewSet):
             })
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'], url_path='branches/(?P<branch_name>[^/]+)/files/upload')
+    def upload_file(self, request, public_id=None, branch_name=None):
+        """
+        Загрузка файла в ветку.
+        """
+        repository = self.get_object()
+        
+        # Находим ветку
+        try:
+            branch = repository.branches.get(name=branch_name)
+        except Branch.DoesNotExist:
+            return Response({"error": "Ветка не найдена"}, status=404)
+            
+        serializer = FileUploadSerializer(data=request.data)
+        if serializer.is_valid():
+            uploaded_file = serializer.validated_data['file']
+            rel_path = serializer.validated_data.get('path', '')
+            
+            # Строим путь: media/version_management/{repo_uuid}/branches/{branch_name}/{rel_path}
+            repo_uuid = str(repository.public_id)
+            base_path = os.path.join(MEDIA_ROOT, 'version_management', repo_uuid, 'branches', branch_name)
+            
+            # Ensure target directory exists
+            target_dir = os.path.join(base_path, rel_path)
+            os.makedirs(target_dir, exist_ok=True)
+            
+            file_path = os.path.join(target_dir, uploaded_file.name)
+            
+            # Сохраняем файл
+            with open(file_path, 'wb+') as destination:
+                for chunk in uploaded_file.chunks():
+                    destination.write(chunk)
+            
+            return Response({'success': True, 'message': 'Файл загружен', 'file': uploaded_file.name})
+        
+        return Response(serializer.errors, status=400)
 
     @action(detail=True, methods=['post'])
     def make_default(self, request, pk=None):

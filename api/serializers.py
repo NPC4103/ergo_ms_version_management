@@ -563,3 +563,14 @@ class CollaboratorCreateSerializer(CLIAuthMixin, serializers.Serializer):
         
         data['repository'] = repository
         return data
+
+class FileUploadSerializer(serializers.Serializer):
+    """Сериализатор для загрузки файлов"""
+    file = serializers.FileField(required=True)
+    path = serializers.CharField(required=False, default='', allow_blank=True)
+
+    def validate_path(self, value):
+        # Prevent directory traversal
+        if '..' in value or value.startswith('/'):
+            raise serializers.ValidationError("Некорректный путь")
+        return value
