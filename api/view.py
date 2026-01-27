@@ -18,6 +18,7 @@ import uuid as uuid_lib
 
 from .smart_merge import smart_merge
 from .file_analyzer import analyze_repository
+from .forecast import analyze_repository_forecast
 
 from .models import Repository, Branch, Collaborator
 from .serializers import (
@@ -1611,6 +1612,83 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                 return f"{size:.2f} {unit}"
             size /= 1024
         return f"{size:.2f} PB"
+
+    @action(detail=True, methods=['get'], url_path='forecast')
+    def forecast(self, request, public_id=None):
+        """
+        Прогнозирование роста репозитория на основе временных рядов.
+        GET /api/version_management/repositories/{public_id}/forecast/
+        
+        Query params:
+            - history_days: дней истории для анализа (default: 90, max: 365)
+            - forecast_days: дней для прогноза (default: 30, max: 90)
+        
+        Returns:
+        {
+            "success": true,
+            "time_series": [
+                {"date": "2026-01-01", "bytes_added": 15000, "bytes_deleted": 2000, ...},
+                ...
+            ],
+            "forecast": {
+                "moving_average_7d": 12500,
+                "moving_average_30d": 10000,
+                "daily_trend": 150.5,
+                "confidence": "high",
+                "forecast": [
+                    {"date": "2026-01-28", "predicted_daily_growth": 12650, ...},
+                    ...
+                ]
+            },
+            "summary": {
+                "history_days": 90,
+                "total_commits": 245,
+                "net_growth": 47185920,
+                "net_growth_human": "45.00 MB",
+                "avg_daily_growth_human": "500.00 KB",
+                "projected_30d_growth_human": "15.00 MB"
+            }
+        }
+        """
+        repository = self.get_object()
+        
+        # Проверяем права на просмотр
+        #if not repository.can_user_view(request.user.id):
+        #    raise PermissionDenied("У вас нет доступа к этому репозиторию")
+        
+        # Получаем параметры запроса
+        try:
+            history_days = min(int(request.query_params.get('history_days', 90)), 365)
+            forecast_days = min(int(request.query_params.get('forecast_days', 30)), 90)
+        except (ValueError, TypeError):
+            history_days = 90
+            forecast_days = 30
+        
+        try:
+            # Выполняем анализ и прогнозирование
+            result = analyze_repository_forecast(
+                media_root=str(MEDIA_ROOT),
+                repo_uuid=str(repository.public_id),
+                history_days=history_days,
+                forecast_days=forecast_days
+            )
+            
+            return Response({
+                'success': True,
+                'time_series': result['time_series'],
+                'forecast': result['forecast'],
+                'summary': result['summary'],
+                'repository': {
+                    'public_id': str(repository.public_id),
+                    'name': repository.name,
+                }
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': f'Ошибка прогнозирования: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class BranchViewSet(viewsets.ModelViewSet):
