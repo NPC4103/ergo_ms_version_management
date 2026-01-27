@@ -1831,17 +1831,8 @@ class CollaboratorViewSet(viewsets.ModelViewSet):
                 'error': 'Репозиторий не найден'
             }, status=status.HTTP_404_NOT_FOUND)
         
-        # Проверяем права на управление коллабораторами
-        if request.user.id != repository.owner_id:
-            # Проверяем, является ли пользователь администратором
-            admin_collaborator = repository.collaborators.filter(
-                user_id=request.user.id,
-                role='admin'
-            ).first()
-            if not admin_collaborator:
-                raise PermissionDenied("Только владелец или администратор может добавлять коллабораторов")
-        
         # Используем сериализатор для создания коллаборатора
+        # Валидация в сериализаторе (через CLIAuthMixin) сама проверит права пользователя
         serializer = CollaboratorCreateSerializer(
             data=request.data,
             context={'request': request, 'repository': repository}
@@ -1851,7 +1842,7 @@ class CollaboratorViewSet(viewsets.ModelViewSet):
             # Создаем коллаборатора
             collaborator = Collaborator.objects.create(
                 repository=repository,
-                user_id=serializer.validated_data['user_id'],
+                user_id=serializer.validated_data['target_user'].id,
                 role=serializer.validated_data['role']
             )
             

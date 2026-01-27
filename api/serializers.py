@@ -5,7 +5,10 @@ from tabnanny import check
 from urllib3 import request
 from django.template import context
 from rest_framework import serializers
+from django.contrib.auth import get_user_model
 from .models import Repository, Branch, Collaborator
+
+User = get_user_model()
 
 
 class RepositorySerializer(serializers.ModelSerializer):
@@ -227,14 +230,14 @@ class CLIAuthMixin:
         super().__init__(*args, **kwargs)
         
         # Динамически добавляем поля, если их еще нет
-        if not hasattr(self, 'cli_username'):
+        if 'cli_username' not in self.fields:
             self.fields['cli_username'] = serializers.CharField(
                 required=False, 
                 write_only=True,
                 help_text="Имя пользователя для аутентификации через CLI"
             )
         
-        if not hasattr(self, 'cli_password'):
+        if 'cli_password' not in self.fields:
             self.fields['cli_password'] = serializers.CharField(
                 required=False, 
                 write_only=True,
@@ -518,7 +521,8 @@ class CollaboratorSerializer(serializers.ModelSerializer):
 
 class CollaboratorCreateSerializer(CLIAuthMixin, serializers.Serializer):
     """Сериализатор для добавления коллаборатора"""
-    user_id = serializers.IntegerField(required=True)
+    user_id = serializers.IntegerField(required=False)
+    username = serializers.CharField(required=False)
     role = serializers.ChoiceField(choices=Collaborator.ROLE_CHOICES, default='write')
     
     repository_public_id = serializers.UUIDField(required=True)
@@ -549,19 +553,38 @@ class CollaboratorCreateSerializer(CLIAuthMixin, serializers.Serializer):
             if not admin_collaborator:
                 raise serializers.ValidationError("Только владелец или администратор может добавлять коллабораторов")
         
+        # Определяем пользователя, которого добавляем
+        target_user = None
+        user_id = data.get('user_id')
+        username = data.get('username')
+
+        if user_id:
+            try:
+                target_user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                raise serializers.ValidationError({'user_id': 'Пользователь не найден'})
+        elif username:
+            try:
+                target_user = User.objects.get(username=username)
+            except User.DoesNotExist:
+                raise serializers.ValidationError({'username': 'Пользователь не найден'})
+        else:
+            raise serializers.ValidationError("Необходимо указать user_id или username")
+
         # Проверяем, что пользователь не является владельцем
-        if data['user_id'] == repository.owner_id:
+        if target_user.id == repository.owner_id:
             raise serializers.ValidationError({
-                'user_id': 'Владелец репозитория не может быть добавлен как коллаборатор'
+                'user': 'Владелец репозитория не может быть добавлен как коллаборатор'
             })
         
         # Проверяем, что пользователь еще не является коллаборатором
-        if repository.collaborators.filter(user_id=data['user_id']).exists():
+        if repository.collaborators.filter(user_id=target_user.id).exists():
             raise serializers.ValidationError({
-                'user_id': 'Пользователь уже является коллаборатором этого репозитория'
+                'user': 'Пользователь уже является коллаборатором этого репозитория'
             })
         
         data['repository'] = repository
+        data['target_user'] = target_user
         return data
 
 class FileUploadSerializer(serializers.Serializer):
