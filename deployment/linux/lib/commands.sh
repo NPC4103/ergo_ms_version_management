@@ -164,17 +164,21 @@ cmd_add() {
     exit 1
   fi
   
-  # 3. Получить предыдущее состояние проекта
+  # 3. Получить предыдущее состояние проекта (во временный файл, как в Windows — без встраивания в heredoc)
   local previous_state_json
   previous_state_json="$(get_project_content "$uuid" "$repo_root")"
-  
+  local prev_state_file
+  prev_state_file="$(mktemp)"
+  echo "$previous_state_json" > "$prev_state_file"
+  trap 'rm -f "$prev_state_file"' RETURN EXIT
+
   # 4. Загрузить правила игнорирования
   local ignore_patterns_array=()
   local ergovcs_ignore_path="$repo_root/.ergovcsignore"
   if [[ -f "$ergovcs_ignore_path" ]]; then
     while IFS= read -r line; do
-      line="${line%%#*}"  # Удаляем комментарии
-      line="${line// /}"  # Удаляем пробелы
+      line="${line%%#*}"
+      line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
       if [[ -n "$line" ]]; then
         ignore_patterns_array+=("$line")
       fi
@@ -292,97 +296,79 @@ print(json.dumps(staging))
       continue
     fi
     
-    # Обновляем staging area через Python
-    staging_json="$(echo "$staging_json" | python3 - <<PYTHON
+    # Обновляем staging area через Python (previous_state из файла, как в Windows)
+    staging_json="$(ERGOVCS_PREV_STATE_FILE="$prev_state_file" \
+      ERGOVCS_REL_PATH="$relative_path" ERGOVCS_ACTION="$action" \
+      ERGOVCS_IS_DIR="$is_directory" ERGOVCS_FULL_PATH="$full_path" ERGOVCS_EXISTS="$exists" \
+      echo "$staging_json" | python3 - <<'PYTHON'
 import json, sys, os
 from datetime import datetime
 
+prev_file = os.environ.get('ERGOVCS_PREV_STATE_FILE', '')
+try:
+    with open(prev_file) as fp:
+        previous_state = json.load(fp)
+except Exception:
+    previous_state = {'structure': []}
+
 try:
     staging = json.load(sys.stdin)
-    relative_path = '${relative_path}'
-    action = '${action}'
-    is_directory = ${is_directory}
-    full_path = '${full_path}'
-    exists = ${exists}
-    
-    # Проверяем, не добавлен ли уже в staging
+    relative_path = os.environ.get('ERGOVCS_REL_PATH', '')
+    action = os.environ.get('ERGOVCS_ACTION', '')
+    is_directory = os.environ.get('ERGOVCS_IS_DIR', 'false') == 'true'
+    full_path = os.environ.get('ERGOVCS_FULL_PATH', '')
+    exists = os.environ.get('ERGOVCS_EXISTS', 'false') == 'true'
+
     item_index = -1
     for j, f in enumerate(staging['files']):
         if f.get('path') == relative_path:
             item_index = j
             break
-    
-    # Создаем запись
+
     item_entry = {
         'path': relative_path,
         'action': action,
         'is_directory': is_directory,
         'timestamp': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
     }
-    
-    # Добавляем дополнительные данные в зависимости от типа изменения
+
     if action == 'created':
         if not is_directory and exists:
             try:
                 with open(full_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                item_entry['content'] = content
+                    item_entry['content'] = f.read()
                 import hashlib
-                item_entry['hash'] = hashlib.md5(content.encode('utf-8')).hexdigest()
-            except Exception as e:
+                item_entry['hash'] = hashlib.md5(item_entry['content'].encode('utf-8')).hexdigest()
+            except Exception:
                 pass
     elif action == 'updated':
         if not is_directory and exists:
             try:
                 with open(full_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                item_entry['content'] = content
+                    item_entry['content'] = f.read()
                 import hashlib
-                item_entry['hash'] = hashlib.md5(content.encode('utf-8')).hexdigest()
-                
-                # Добавляем старый хеш, если есть
-                import json as json_module
-                previous_state = json_module.loads('''${previous_state_json}''')
-                previous_entry = None
-                for entry in previous_state.get('structure', []):
-                    if entry.get('path') == relative_path:
-                        previous_entry = entry
-                        break
+                item_entry['hash'] = hashlib.md5(item_entry['content'].encode('utf-8')).hexdigest()
+                previous_entry = next((e for e in previous_state.get('structure', []) if e.get('path') == relative_path), None)
                 if previous_entry and previous_entry.get('hash'):
                     item_entry['old_hash'] = previous_entry['hash']
-            except Exception as e:
+            except Exception:
                 pass
     elif action == 'renamed':
-        # Ищем старый путь в предыдущем состоянии
-        import json as json_module
-        previous_state = json_module.loads('''${previous_state_json}''')
-        previous_entry = None
-        for entry in previous_state.get('structure', []):
-            if entry.get('path') != relative_path and (entry.get('old_path') == relative_path or entry.get('path') == relative_path):
-                previous_entry = entry
-                break
+        previous_entry = next((e for e in previous_state.get('structure', []) if e.get('path') != relative_path and (e.get('old_path') == relative_path or e.get('path') == relative_path)), None)
         if previous_entry:
             item_entry['old_path'] = previous_entry.get('path')
             item_entry['hash'] = previous_entry.get('hash')
     elif action == 'deleted':
-        # Для удаленных файлов получаем информацию из предыдущего состояния
-        import json as json_module
-        previous_state = json_module.loads('''${previous_state_json}''')
-        previous_entry = None
-        for entry in previous_state.get('structure', []):
-            if entry.get('path') == relative_path:
-                previous_entry = entry
-                break
+        previous_entry = next((e for e in previous_state.get('structure', []) if e.get('path') == relative_path), None)
         if previous_entry:
             item_entry['is_directory'] = previous_entry.get('is_directory', False)
             item_entry['hash'] = previous_entry.get('hash')
-    
-    # Обновляем или добавляем запись
+
     if item_index >= 0:
         staging['files'][item_index] = item_entry
     else:
         staging['files'].append(item_entry)
-    
+
     print(json.dumps(staging, ensure_ascii=False))
 except Exception as e:
     print(f"[ERROR] Ошибка при обновлении staging area: {e}", file=sys.stderr)
@@ -558,23 +544,8 @@ out=[{'path':f.get('path',''),'content':f.get('content','') or '','action':f.get
 print(json.dumps(out))
 ")"
   
-  local branch=""
-  if [[ -f "$HOME/.ergovcs/repos.json" ]]; then
-    branch="$(ERGOVCS_REPO_ROOT="$repo_root" python3 -c "
-import json, os
-r = os.environ.get('ERGOVCS_REPO_ROOT', '')
-try:
-    with open(os.path.expanduser('~/.ergovcs/repos.json')) as f:
-        d = json.load(f)
-    for k, v in (d.get('repositories') or {}).items():
-        if isinstance(v, dict) and (v.get('local_path') or '') == r:
-            print(v.get('current_branch', ''))
-            break
-except Exception:
-    pass
-" 2>/dev/null)"
-  fi
-  
+  local branch
+  branch="$(get_current_branch "$repo_root")"
   local response
   response="$(api_create_commit "$uuid" "$message" "$files_for_api" "$branch")"
   [[ -z "$response" ]] && echo "[ERROR] Не удалось создать коммит через API." >&2 && exit 1

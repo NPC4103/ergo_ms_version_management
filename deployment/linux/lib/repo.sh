@@ -428,112 +428,32 @@ except:
   echo '{"source": "empty", "structure": []}'
 }
 
-# Получить автора коммита
-get_commit_author() {
-  # 1. Пробуем получить через API
-  local api_response
-  api_response="$(api_request "GET" "/user/current/" 2>/dev/null)"
-  if [[ $? -eq 0 ]] && [[ -n "$api_response" ]]; then
-    local username
-    username="$(echo "$api_response" | python3 -c "import json, sys; data = json.load(sys.stdin); print(data.get('username', ''))" 2>/dev/null)"
-    if [[ -n "$username" ]]; then
-      echo "$username"
-      return 0
-    fi
-  fi
-  
-  # 2. Пробуем получить из переменных окружения
-  if [[ -n "${USER:-}" ]]; then
-    echo "$USER"
-    return 0
-  elif [[ -n "${USERNAME:-}" ]]; then
-    echo "$USERNAME"
-    return 0
-  fi
-  
-  # 3. Пробуем получить через команду whoami
-  if command -v whoami >/dev/null 2>&1; then
-    local username
-    username="$(whoami 2>/dev/null)"
-    if [[ -n "$username" ]]; then
-      echo "$username"
-      return 0
-    fi
-  fi
-  
-  # 4. Возвращаем Unknown
-  echo "Unknown"
-}
+# Получить текущую ветку из конфига (как в Windows: локальный .ergovcs/repos.json, затем ~/.ergovcs/repos.json)
+get_current_branch() {
+  local local_path="$1"
+  local branch=""
+  local f
 
-# Определить тип коммита на основе изменений
-get_commit_type() {
-  local files_json="$1"
-  local message="${2:-}"
-  
-  # Проверяем, указан ли тип в сообщении
-  local commit_types=("feat" "fix" "docs" "style" "refactor" "test" "chore" "perf" "ci" "build" "revert")
-  
-  if [[ -n "$message" ]] && echo "$message" | grep -qE '^(\w+):'; then
-    local type
-    type="$(echo "$message" | sed -E 's/^(\w+):.*/\1/')"
-    for ct in "${commit_types[@]}"; do
-      if [[ "$type" == "$ct" ]]; then
-        echo "$type"
-        return 0
-      fi
-    done
-  fi
-  
-  # Автоматическое определение типа на основе изменений
-  echo "$files_json" | python3 -c "
-import json, sys, re
-
-files_json = sys.stdin.read()
+  for f in "$local_path/.ergovcs/repos.json" "$HOME/.ergovcs/repos.json"; do
+    if [[ -f "$f" ]]; then
+      branch="$(ERGOVCS_REPO_ROOT="$local_path" ERGOVCS_REPOS_FILE="$f" python3 -c "
+import json, os
+r = os.environ.get('ERGOVCS_REPO_ROOT', '')
+p = os.environ.get('ERGOVCS_REPOS_FILE', '')
 try:
-    files = json.loads(files_json)
-    if not isinstance(files, list):
-        files = []
-except:
-    files = []
-
-has_build_files = False
-has_source_files = False
-has_docs_files = False
-has_style_files = False
-
-for file in files:
-    path = file.get('path', '').lower()
-    action = file.get('action', '')
-    
-    # Проверяем файлы сборки
-    if re.search(r'(package\.json|pom\.xml|build\.gradle|build\.xml|cmakelists\.txt|makefile|dockerfile|\.yml\$|\.yaml\$|\.json\$|\.config\$|\.ini\$)', path):
-        has_build_files = True
-    
-    # Проверяем исходные файлы (новый функционал)
-    if re.search(r'(\.py\$|\.js\$|\.ts\$|\.java\$|\.cpp\$|\.cs\$|\.php\$|\.rb\$|\.go\$)', path):
-        if action == 'created':
-            has_source_files = True
-    
-    # Проверяем документацию
-    if re.search(r'(readme\.md|readme\.txt|\.md\$|\.rst\$|docs?/)', path):
-        has_docs_files = True
-    
-    # Проверяем стили
-    if re.search(r'(\.css\$|\.scss\$|\.less\$|\.sass\$|\.styl\$)', path):
-        has_style_files = True
-
-# Определяем тип по приоритету
-if has_build_files:
-    print('build')
-elif has_source_files:
-    print('feat')
-elif has_docs_files:
-    print('docs')
-elif has_style_files:
-    print('style')
-else:
-    print('chore')
-"
+    with open(p) as fp:
+        d = json.load(fp)
+    for k, v in (d.get('repositories') or {}).items():
+        if isinstance(v, dict) and (v.get('local_path') or '') == r:
+            print(v.get('current_branch') or 'main')
+            break
+except Exception:
+    pass
+" 2>/dev/null)"
+      [[ -n "$branch" ]] && echo "$branch" && return 0
+    fi
+  done
+  echo "main"
 }
 
 # ============================================================================
