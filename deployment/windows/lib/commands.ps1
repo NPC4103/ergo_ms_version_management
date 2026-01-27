@@ -155,7 +155,7 @@ function Invoke-Add {
   $previousState = Get-ProjectContent -RepoUuid $uuid -LocalPath $repoRoot
   
   # 4. Загрузить правила игнорирования
-  $ignorePatterns = @()
+  $ignorePatternsArray = @()
   $ergovcsIgnorePath = Join-Path $repoRoot ".ergovcsignore"
   if (Test-Path $ergovcsIgnorePath) {
     $ignorePatterns = Get-Content $ergovcsIgnorePath | Where-Object { 
@@ -163,22 +163,29 @@ function Invoke-Add {
     } | ForEach-Object { $_.Trim() }
   }
   
-  $ignorePatterns += ".*"
-  $ignorePatterns += "*/.*"
-  $ignorePatterns += ".venv"
+  # Добавляем стандартные паттерны игнорирования
+  $ignorePatternsArray += ".*"
+  $ignorePatternsArray += "*/.*"
   
   # 5. Если аргументы не переданы, сканируем всю директорию
   if ($Files.Count -eq 0) {
-    Write-Host "[INFO] Сканирую все файлы и директории..." -ForegroundColor Cyan
+    Write-Host "[INFO] Сканирую все файлы и директории (исключая игнорируемые)..." -ForegroundColor Cyan
     
-    $Files = Get-AllItems -Path $repoRoot -RepoRoot $repoRoot -IgnorePatterns $ignorePatterns
+    # Используем улучшенную функцию с фильтрацией
+    $allItems = Get-ChildItem -Path $repoRoot -Recurse -Force | ForEach-Object {
+      $relativePath = [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName).Replace('\', '/')
+      if (-not (Test-Ignored -FilePath $relativePath -IgnorePatterns $ignorePatternsArray)) {
+        $relativePath
+      }
+    }
     
-    if ($Files.Count -eq 0) {
-      Write-Host "[INFO] Нет файлов для добавления." -ForegroundColor Yellow
+    if ($allItems.Count -eq 0) {
+      Write-Host "[INFO] Нет файлов для добавления (все файлы игнорируются или отсутствуют)." -ForegroundColor Yellow
       exit 0
     }
     
-    Write-Host "[INFO] Найдено элементов: $($Files.Count)" -ForegroundColor Gray
+    Write-Host "[INFO] Найдено элементов: $($allItems.Count)" -ForegroundColor Gray
+    $Files = $allItems
   }
   
   # 6. Создать директорию .ergovcs
@@ -237,6 +244,7 @@ function Invoke-Add {
     # Проверяем игнорирование
     if (Test-Ignored -FilePath $relativePath -IgnorePatterns $ignorePatterns) {
       $ignoredItems += $relativePath
+      Write-Host "[IGNORE] Игнорировано: $relativePath" -ForegroundColor DarkGray
       continue
     }
     
@@ -379,7 +387,7 @@ function Invoke-Add {
 
 # ============================================================================
 # Создание коммита
-# Команда: ergovcs commit --message "Сообщение" [--edit] [--save-message] [--save-changes]
+# Команда: ergovcs commit --message "Сообщение" [--update-changes] [--edit-message]
 # Создаёт коммит с изменениями
 # ============================================================================
 function Invoke-Commit {
@@ -387,9 +395,8 @@ function Invoke-Commit {
   
   # 1. Парсинг аргументов
   $message = $null
-  $isChange = $false
-  $saveMessageOnly = $false
-  $saveFilesOnly = $false
+  $updateChanges = $false
+  $editMessage = $false
   
   for ($i = 0; $i -lt $MessageArg.Count; $i++) {
       $arg = $MessageArg[$i]
@@ -398,20 +405,34 @@ function Invoke-Commit {
               $i++
               if ($i -lt $MessageArg.Count) {
                   $message = $MessageArg[$i]
+              } else {
+                  # Если после -m ничего нет, запросим позже
+                  $message = ""
               }
           }
           "--message" { 
               $i++
               if ($i -lt $MessageArg.Count) {
                   $message = $MessageArg[$i]
+              } else {
+                  # Если после --message ничего нет, запросим позже
+                  $message = ""
               }
           }
-          "-e" { $isChange = $true }
-          "--edit" { $isChange = $true }
-          "-sm" { $saveMessageOnly = $true }
-          "--save-message" { $saveMessageOnly = $true }
-          "-sc" { $saveFilesOnly = $true }
-          "--save-changes" { $saveFilesOnly = $true }
+          "-uc" { $updateChanges = $true }
+          "--update-changes" { $updateChanges = $true }
+          "-em" { $editMessage = $true }
+          "--edit-message" { 
+              $editMessage = $true
+              # Проверяем, есть ли следующее значение для сообщения
+              if ($i + 1 -lt $MessageArg.Count -and -not $MessageArg[$i + 1].StartsWith("-")) {
+                  $i++
+                  $message = $MessageArg[$i]
+              } else {
+                  # Если после --edit-message ничего нет, запросим позже
+                  $message = ""
+              }
+          }
           default {
               if (-not $message -and -not $arg.StartsWith("-")) {
                   $message = $arg
@@ -421,19 +442,8 @@ function Invoke-Commit {
   }
   
   # Валидация опций
-  if ($saveMessageOnly -and $saveFilesOnly) {
-      Write-Host "[ERROR] Опции --save-message и --save-changes не могут использоваться вместе." -ForegroundColor Red
-      exit 1
-  }
-  
-  if (($saveMessageOnly -or $saveFilesOnly) -and -not $isChange) {
-      Write-Host "[ERROR] Опции --save-message и --save-changes требуют опции --edit." -ForegroundColor Red
-      exit 1
-  }
-  
-  if (-not $message -and -not $saveFilesOnly) {
-      Write-Host "[ERROR] Необходимо указать сообщение коммита" -ForegroundColor Red
-      Write-Host "Использование: ergovcs commit --message `"Сообщение`" [--edit] [--save-message] [--save-changes]" -ForegroundColor Yellow
+  if ($updateChanges -and $editMessage) {
+      Write-Host "[ERROR] Опции --update-changes и --edit-message не могут использоваться вместе." -ForegroundColor Red
       exit 1
   }
   
@@ -468,7 +478,7 @@ function Invoke-Commit {
   }
   
   # 5. Проверить, есть ли файлы в staging area
-  if (-not $staging.files -or $staging.files.Count -eq 0) {
+  if ((-not $staging.files -or $staging.files.Count -eq 0) -and -not $editMessage) {
       Write-Host "[ERROR] Нет файлов в staging area." -ForegroundColor Red
       exit 1
   }
@@ -479,6 +489,18 @@ function Invoke-Commit {
   
   # 7. Определить тип коммита
   $commitType = Get-CommitType -Files $staging.files -Message $message
+  
+  # 8. Запросить сообщение, если оно не указано
+  if ([string]::IsNullOrWhiteSpace($message) -and -not $updateChanges) {
+      Write-Host "[INFO] Введите сообщение коммита:" -ForegroundColor Cyan
+      
+      $message = Read-Host "Сообщение"
+      
+      if ([string]::IsNullOrWhiteSpace($message)) {
+          Write-Host "[ERROR] Сообщение коммита не может быть пустым." -ForegroundColor Red
+          exit 1
+      }
+  }
   
   # Добавляем тип к сообщению, если его там нет
   $commitTypes = @("feat", "fix", "docs", "style", "refactor", "test", "chore", "perf", "ci", "build", "revert")
@@ -496,7 +518,7 @@ function Invoke-Commit {
       Write-Host "[INFO] Автоматически определен тип коммита: $commitType" -ForegroundColor Cyan
   }
   
-  # 8. Классификация изменений
+  # 9. Классификация изменений
   $actionStats = @{
       created = @{ count = 0; files = 0; dirs = 0 }
       updated = @{ count = 0; files = 0; dirs = 0 }
@@ -535,7 +557,7 @@ function Invoke-Commit {
   
   $changeSummaryStr = if ($changeSummary.Count -gt 0) { ($changeSummary -join ", ") } else { "нет изменений" }
   
-  # 9. Обработка файла commit.json
+  # 10. Обработка файла commit.json
   $commitFile = Join-Path $repoRoot ".ergovcs" "commit.json"
   $existingCommit = $null
   
@@ -550,7 +572,7 @@ function Invoke-Commit {
       }
   }
   
-  # 10. Создание/обновление коммита
+  # 11. Создание/обновление коммита
   $commit = @{
       repository_uuid = $uuid
       message = $message
@@ -562,36 +584,36 @@ function Invoke-Commit {
       stats = $actionStats
   }
   
-  if ($isChange -and $existingCommit) {
-      Write-Host "[INFO] Обновление существующего коммита..." -ForegroundColor Yellow
+  if ($editMessage -or $updateChanges) {
+      if (-not $existingCommit) {
+          Write-Host "[ERROR] Не существует коммита для редактирования." -ForegroundColor Red
+          exit 1
+      }
       
-      # Сохраняем исходные данные
+      Write-Host "[INFO] Редактирование существующего коммита..." -ForegroundColor Yellow
+      
+      # Сохраняем исходную дату создания
       $commit.created_at = $existingCommit.created_at
       
-      if ($saveMessageOnly) {
-          $commit.message = $message
-          $commit.type = $commitType
+      if ($editMessage) {
+          # Обновляем только сообщение
           $commit.files = $existingCommit.files
+          $commit.change_summary = $existingCommit.change_summary
+          $commit.stats = $existingCommit.stats
           Write-Host "[INFO] Обновлено только сообщение коммита." -ForegroundColor Cyan
-      }
-      elseif ($saveFilesOnly) {
+      } elseif ($updateChanges) {
+          # Обновляем только файлы
           $commit.message = $existingCommit.message
           $commit.type = $existingCommit.type
           $commit.files = $staging.files
           Write-Host "[INFO] Обновлены только файлы в коммите." -ForegroundColor Cyan
       }
-      else {
-          $commit.message = $message
-          $commit.type = $commitType
-          $commit.files = $staging.files
-          Write-Host "[INFO] Коммит полностью перезаписан." -ForegroundColor Cyan
-      }
-  }
-  else {
+  } else {
+      # Создаем новый коммит
       $commit.files = $staging.files
   }
   
-  # 11. Сохранить коммит в файл commit.json
+  # 12. Сохранить коммит в файл commit.json
   try {
       $jsonContent = $commit | ConvertTo-Json -Depth 10
       Set-Content -Path $commitFile -Value $jsonContent -Encoding UTF8 -Force
@@ -602,8 +624,8 @@ function Invoke-Commit {
       Write-Host "Автор: $($commit.author)" -ForegroundColor Cyan
       Write-Host "Изменения: $($commit.change_summary)" -ForegroundColor Cyan
       
-      # 12. Очистить staging area (только если не сохраняем только сообщение)
-      if (-not $saveMessageOnly) {
+      # 13. Очистить staging area (только если не редактируем сообщение)
+      if (-not $editMessage) {
           $emptyStaging = @{
               repository_uuid = $uuid
               files = @()
@@ -611,6 +633,8 @@ function Invoke-Commit {
           $emptyStagingJson = $emptyStaging | ConvertTo-Json -Depth 10
           Set-Content -Path $stagingFile -Value $emptyStagingJson -Encoding UTF8 -Force
           Write-Host "[INFO] Staging area очищен." -ForegroundColor Cyan
+      } else {
+          Write-Host "[INFO] Staging area сохранен для возможных изменений." -ForegroundColor Yellow
       }
       
       Write-Host "[INFO] Используйте команду 'push' для отправки коммита на сервер." -ForegroundColor Yellow

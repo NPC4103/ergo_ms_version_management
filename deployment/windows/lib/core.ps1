@@ -249,19 +249,72 @@ function Test-Ignored {
     [array]$IgnorePatterns
   )
   
+  # Всегда игнорируем .ergovcs
   if ($FilePath -like '.ergovcs/*' -or $FilePath -eq '.ergovcs') {
     return $true
   }
   
+  # Нормализуем путь (заменяем обратные слеши на прямые)
+  $normalizedPath = $FilePath.Replace('\', '/')
+  
   foreach ($pattern in $IgnorePatterns) {
-    if ($pattern.Contains('*') -or $pattern.Contains('?')) {
-      if ($FilePath -like $pattern) {
-        return $true
+    $normalizedPattern = $pattern.Trim()
+    if ([string]::IsNullOrWhiteSpace($normalizedPattern)) {
+      continue
+    }
+    
+    # Убираем начальные и конечные пробелы
+    $normalizedPattern = $normalizedPattern.Trim()
+    
+    # Пропускаем комментарии
+    if ($normalizedPattern.StartsWith("#")) {
+      continue
+    }
+    
+    # Если паттерн заканчивается на /, то это директория
+    $isDirectoryPattern = $normalizedPattern.EndsWith('/')
+    if ($isDirectoryPattern) {
+      $normalizedPattern = $normalizedPattern.TrimEnd('/')
+    }
+    
+    # Преобразуем glob-паттерны в regex
+    $regexPattern = [regex]::Escape($normalizedPattern)
+    $regexPattern = $regexPattern.Replace('\*', '.*').Replace('\?', '.')
+    
+    # Если паттерн начинается с /, он должен соответствовать началу пути
+    if ($normalizedPattern.StartsWith('/')) {
+      $regexPattern = '^' + $regexPattern.Substring(1)
+    }
+    # Иначе паттерн может соответствовать любой части пути
+    else {
+      # Если паттерн содержит /, он должен соответствовать с начала сегмента
+      if ($normalizedPattern.Contains('/')) {
+        $regexPattern = '(^|/)' + $regexPattern
       }
-    } else {
-      if ($FilePath -eq $pattern) {
-        return $true
+      # Иначе паттерн может быть в любом месте имени файла/директории
+      else {
+        $regexPattern = $regexPattern
       }
+    }
+    
+    # Добавляем завершение для полного совпадения (если не заканчивается на *)
+    if (-not $regexPattern.EndsWith('.*')) {
+      $regexPattern = $regexPattern + '$'
+    }
+    
+    # Если это паттерн директории, добавляем завершающий слеш
+    if ($isDirectoryPattern) {
+      $regexPattern = $regexPattern.TrimEnd('$') + '(/|$)'
+    }
+    
+    # Проверяем соответствие
+    if ($normalizedPath -match $regexPattern) {
+      return $true
+    }
+    
+    # Дополнительная проверка для директорий: если путь начинается с паттерна
+    if ($normalizedPath.StartsWith($normalizedPattern + '/')) {
+      return $true
     }
   }
   
@@ -277,8 +330,12 @@ function Get-AllItems {
   
   $items = @()
   
-  # Добавляем саму директорию
-  if ($Path -ne $RepoRoot) {
+  # Нормализуем пути
+  $normalizedRepoRoot = $RepoRoot.Replace('\', '/').TrimEnd('/')
+  $normalizedPath = $Path.Replace('\', '/').TrimEnd('/')
+  
+  # Добавляем саму директорию (если это не корень репозитория)
+  if ($normalizedPath -ne $normalizedRepoRoot) {
     $relativePath = [System.IO.Path]::GetRelativePath($RepoRoot, $Path).Replace('\', '/')
     if (-not (Test-Ignored -FilePath $relativePath -IgnorePatterns $IgnorePatterns)) {
       $items += $relativePath
@@ -289,12 +346,14 @@ function Get-AllItems {
   Get-ChildItem -Path $Path -Force | ForEach-Object {
     $relativePath = [System.IO.Path]::GetRelativePath($RepoRoot, $_.FullName).Replace('\', '/')
     
+    # Проверяем, не игнорируется ли элемент
     if (-not (Test-Ignored -FilePath $relativePath -IgnorePatterns $IgnorePatterns)) {
       $items += $relativePath
       
       # Рекурсивно обрабатываем директории
       if ($_.PSIsContainer) {
-        $items += Get-AllItems -Path $_.FullName -RepoRoot $RepoRoot -IgnorePatterns $IgnorePatterns
+        $subItems = Get-AllItems -Path $_.FullName -RepoRoot $RepoRoot -IgnorePatterns $IgnorePatterns
+        $items += $subItems
       }
     }
   }

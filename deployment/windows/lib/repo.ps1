@@ -589,136 +589,136 @@ function Get-CommitType {
 
 # Сохранить backup.json с текущим состоянием репозитория
 function Save-BackupJson {
-    param(
-        [string]$LocalPath,
-        [string]$RepoUuid
-    )
-    
-    $backupFile = Join-Path $LocalPath ".ergovcs" "backup.json"
-    $backupDir = Split-Path $backupFile -Parent
-    if (-not (Test-Path $backupDir)) {
-        New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
-    }
-    
-    # Получаем структуру файлов репозитория
-    $structure = Get-RepositoryStructure -LocalPath $LocalPath
-    $currentBranch = Get-CurrentBranch -LocalPath $LocalPath
-    
-    $backupData = @{
-        repository_uuid = $RepoUuid
-        timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-        branch = $currentBranch
-        structure = $structure
-    }
-    
-    $backupData | ConvertTo-Json -Depth 20 | Set-Content -Path $backupFile -Encoding UTF8
-    Write-Host "[INFO] Backup сохранен: $backupFile" -ForegroundColor Gray
+  param(
+    [string]$LocalPath,
+    [string]$RepoUuid
+  )
+  
+  $backupFile = Join-Path $LocalPath ".ergovcs" "backup.json"
+  $backupDir = Split-Path $backupFile -Parent
+  if (-not (Test-Path $backupDir)) {
+    New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
+  }
+  
+  # Получаем структуру файлов репозитория
+  $structure = Get-RepositoryStructure -LocalPath $LocalPath
+  $currentBranch = Get-CurrentBranch -LocalPath $LocalPath
+  
+  $backupData = @{
+    repository_uuid = $RepoUuid
+    timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    branch = $currentBranch
+    structure = $structure
+  }
+  
+  $backupData | ConvertTo-Json -Depth 20 | Set-Content -Path $backupFile -Encoding UTF8
+  Write-Host "[INFO] Backup сохранен: $backupFile" -ForegroundColor Gray
 }
 
 # Получить структуру репозитория для backup.json
 function Get-RepositoryStructure {
-    param([string]$LocalPath)
-    
-    $structure = @()
-    
-    # Получаем все файлы и директории (исключая .ergovcs)
-    Get-ChildItem -Path $LocalPath -Recurse -Force | ForEach-Object {
-        if ($_.FullName -notlike "*\.ergovcs*") {
-            $relativePath = [System.IO.Path]::GetRelativePath($LocalPath, $_.FullName).Replace('\', '/')
-            
-            $item = @{
-                path = $relativePath
-                name = $_.Name
-                is_directory = $_.PSIsContainer
-                last_modified = $_.LastWriteTimeUtc.ToString("yyyy-MM-ddTHH:mm:ssZ")
-            }
-            
-            if (-not $_.PSIsContainer) {
-                # Для файлов добавляем хеш содержимого
-                $item.hash = Get-FileContentHash -FilePath $_.FullName
-                $item.size = $_.Length
-            }
-            
-            $structure += $item
-        }
+  param([string]$LocalPath)
+  
+  $structure = @()
+  
+  # Получаем все файлы и директории (исключая .ergovcs)
+  Get-ChildItem -Path $LocalPath -Recurse -Force | ForEach-Object {
+    if ($_.FullName -notlike "*\.ergovcs*") {
+      $relativePath = [System.IO.Path]::GetRelativePath($LocalPath, $_.FullName).Replace('\', '/')
+      
+      $item = @{
+        path = $relativePath
+        name = $_.Name
+        is_directory = $_.PSIsContainer
+        last_modified = $_.LastWriteTimeUtc.ToString("yyyy-MM-ddTHH:mm:ssZ")
+      }
+      
+      if (-not $_.PSIsContainer) {
+        # Для файлов добавляем хеш содержимого
+        $item.hash = Get-FileContentHash -FilePath $_.FullName
+        $item.size = $_.Length
+      }
+      
+      $structure += $item
     }
-    
-    return $structure
+  }
+  
+  return $structure
 }
 
 # Получить текущую ветку из конфига
 function Get-CurrentBranch {
-    param([string]$LocalPath)
-    
-    # Пробуем получить из локального конфига
-    $localReposFile = Join-Path $LocalPath ".ergovcs" "repos.json"
-    if (Test-Path $localReposFile) {
-        try {
-            $reposJson = Get-Content $localReposFile -Raw -Encoding UTF8
-            $repos = $reposJson | ConvertFrom-Json -ErrorAction Stop
-            foreach ($property in $repos.repositories.PSObject.Properties) {
-                $repo = $property.Value
-                if ($repo.local_path -eq $LocalPath) {
-                    return if ($repo.current_branch) { $repo.current_branch } else { "main" }
-                }
-            }
+  param([string]$LocalPath)
+  
+  # Пробуем получить из локального конфига
+  $localReposFile = Join-Path $LocalPath ".ergovcs" "repos.json"
+  if (Test-Path $localReposFile) {
+    try {
+      $reposJson = Get-Content $localReposFile -Raw -Encoding UTF8
+      $repos = $reposJson | ConvertFrom-Json -ErrorAction Stop
+      foreach ($property in $repos.repositories.PSObject.Properties) {
+        $repo = $property.Value
+        if ($repo.local_path -eq $LocalPath) {
+          return if ($repo.current_branch) { $repo.current_branch } else { "main" }
         }
-        catch {}
+      }
     }
-    
-    # Фолбэк: глобальный конфиг
-    $globalReposFile = Join-Path $env:USERPROFILE ".ergovcs" "repos.json"
-    if (Test-Path $globalReposFile) {
-        try {
-            $reposJson = Get-Content $globalReposFile -Raw -Encoding UTF8
-            $repos = $reposJson | ConvertFrom-Json -ErrorAction Stop
-            foreach ($property in $repos.repositories.PSObject.Properties) {
-                $repo = $property.Value
-                if ($repo.local_path -eq $LocalPath) {
-                    return if ($repo.current_branch) { $repo.current_branch } else { "main" }
-                }
-            }
+    catch {}
+  }
+  
+  # Фолбэк: глобальный конфиг
+  $globalReposFile = Join-Path $env:USERPROFILE ".ergovcs" "repos.json"
+  if (Test-Path $globalReposFile) {
+    try {
+      $reposJson = Get-Content $globalReposFile -Raw -Encoding UTF8
+      $repos = $reposJson | ConvertFrom-Json -ErrorAction Stop
+      foreach ($property in $repos.repositories.PSObject.Properties) {
+        $repo = $property.Value
+        if ($repo.local_path -eq $LocalPath) {
+          return if ($repo.current_branch) { $repo.current_branch } else { "main" }
         }
-        catch {}
+      }
     }
-    
-    return "main"
+    catch {}
+  }
+  
+  return "main"
 }
 
 # Обновить конфиг репозитория
 function Update-RepositoryConfig {
-    param(
-        [string]$Uuid,
-        [string]$LastUpdated,
-        [string]$CurrentBranch = $null
-    )
-    
-    $configDir = Join-Path $env:USERPROFILE ".ergovcs"
-    $configFile = Join-Path $configDir "repos.json"
-    
-    if (-not (Test-Path $configDir)) {
-        New-Item -ItemType Directory -Force -Path $configDir | Out-Null
-    }
-    
-    $configData = @{ repositories = @{} }
-    if (Test-Path $configFile) {
-        try {
-            $existing = Get-Content $configFile -Raw | ConvertFrom-Json
-            if ($existing.repositories) {
-                foreach ($p in $existing.repositories.PSObject.Properties) {
-                    $configData.repositories[$p.Name] = $p.Value
-                }
-            }
-        } catch {}
-    }
-    
-    if ($configData.repositories.ContainsKey($Uuid)) {
-        $configData.repositories[$Uuid].last_updated = $LastUpdated
-        if ($CurrentBranch) {
-            $configData.repositories[$Uuid].current_branch = $CurrentBranch
+  param(
+    [string]$Uuid,
+    [string]$LastUpdated,
+    [string]$CurrentBranch = $null
+  )
+  
+  $configDir = Join-Path $env:USERPROFILE ".ergovcs"
+  $configFile = Join-Path $configDir "repos.json"
+  
+  if (-not (Test-Path $configDir)) {
+    New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+  }
+  
+  $configData = @{ repositories = @{} }
+  if (Test-Path $configFile) {
+    try {
+      $existing = Get-Content $configFile -Raw | ConvertFrom-Json
+      if ($existing.repositories) {
+        foreach ($p in $existing.repositories.PSObject.Properties) {
+          $configData.repositories[$p.Name] = $p.Value
         }
+      }
+    } catch {}
+  }
+  
+  if ($configData.repositories.ContainsKey($Uuid)) {
+    $configData.repositories[$Uuid].last_updated = $LastUpdated
+    if ($CurrentBranch) {
+      $configData.repositories[$Uuid].current_branch = $CurrentBranch
     }
-    
-    $configData | ConvertTo-Json -Depth 10 | Set-Content $configFile -Encoding UTF8
+  }
+  
+  $configData | ConvertTo-Json -Depth 10 | Set-Content $configFile -Encoding UTF8
 }
 
