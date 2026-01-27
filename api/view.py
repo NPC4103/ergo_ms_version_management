@@ -1424,6 +1424,113 @@ class RepositoryViewSet(viewsets.ModelViewSet):
             'merged_text': merged_text
         }, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=['post'], url_path=r'branches/(?P<branch_name>[^/]+)/files/upload')
+    def upload_file(self, request, public_id=None, branch_name=None):
+        """
+        Загрузка файла в ветку репозитория.
+        POST /api/version_management/repositories/{public_id}/branches/{branch_name}/files/upload/
+        
+        Form-data:
+          - file: загружаемый файл (обязательно)
+          - path: относительный путь внутри ветки (опционально, по умолчанию - корень)
+        
+        Возвращает:
+        {
+          "success": true,
+          "message": "Файл загружен",
+          "file": {
+            "name": "filename.ext",
+            "path": "relative/path/filename.ext",
+            "size": 12345
+          }
+        }
+        """
+        repository = self.get_object()
+        
+        # Проверяем права на запись
+        #if not repository.can_user_modify(request.user.id):
+        #    raise PermissionDenied("У вас недостаточно прав для загрузки файлов в этот репозиторий")
+        
+        # Находим ветку
+        try:
+            branch = repository.branches.get(name=branch_name)
+        except Branch.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': f'Ветка "{branch_name}" не найдена'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Валидируем данные
+        serializer = FileUploadSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({
+                'success': False,
+                'errors': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        uploaded_file = serializer.validated_data['file']
+        rel_path = serializer.validated_data.get('path', '').strip('/')
+        
+        try:
+            # Строим путь: media/version_management/{repo_uuid}/branches/{branch_name}/{rel_path}
+            repo_uuid = str(repository.public_id)
+            base_path = os.path.join(MEDIA_ROOT, 'version_management', repo_uuid, 'branches', branch_name)
+            
+            # Создаем целевую директорию
+            if rel_path:
+                target_dir = os.path.join(base_path, rel_path)
+            else:
+                target_dir = base_path
+            
+            os.makedirs(target_dir, exist_ok=True)
+            
+            # Полный путь к файлу
+            file_path = os.path.join(target_dir, uploaded_file.name)
+            
+            # Защита от выхода за пределы репозитория (path traversal)
+            base_real_path = os.path.realpath(base_path)
+            file_real_path = os.path.realpath(file_path)
+            if not file_real_path.startswith(base_real_path):
+                return Response({
+                    'success': False,
+                    'error': 'Недопустимый путь'
+                }, status=status.HTTP_403_FORBIDDEN)
+            
+            # Сохраняем файл
+            with open(file_path, 'wb+') as destination:
+                for chunk in uploaded_file.chunks():
+                    destination.write(chunk)
+            
+            # Формируем относительный путь для ответа
+            relative_file_path = os.path.join(rel_path, uploaded_file.name).replace('\\', '/').lstrip('/')
+            
+            return Response({
+                'success': True,
+                'message': 'Файл успешно загружен',
+                'file': {
+                    'name': uploaded_file.name,
+                    'path': relative_file_path,
+                    'size': uploaded_file.size,
+                    'content_type': uploaded_file.content_type
+                },
+                'branch': branch_name,
+                'repository': {
+                    'public_id': str(repository.public_id),
+                    'name': repository.name
+                }
+            }, status=status.HTTP_201_CREATED)
+            
+        except OSError as e:
+            return Response({
+                'success': False,
+                'error': f'Ошибка сохранения файла: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': f'Непредвиденная ошибка: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 class BranchViewSet(viewsets.ModelViewSet):
     """
@@ -1648,43 +1755,6 @@ class BranchViewSet(viewsets.ModelViewSet):
             })
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    @action(detail=True, methods=['post'], url_path='branches/(?P<branch_name>[^/]+)/files/upload')
-    def upload_file(self, request, public_id=None, branch_name=None):
-        """
-        Загрузка файла в ветку.
-        """
-        repository = self.get_object()
-        
-        # Находим ветку
-        try:
-            branch = repository.branches.get(name=branch_name)
-        except Branch.DoesNotExist:
-            return Response({"error": "Ветка не найдена"}, status=404)
-            
-        serializer = FileUploadSerializer(data=request.data)
-        if serializer.is_valid():
-            uploaded_file = serializer.validated_data['file']
-            rel_path = serializer.validated_data.get('path', '')
-            
-            # Строим путь: media/version_management/{repo_uuid}/branches/{branch_name}/{rel_path}
-            repo_uuid = str(repository.public_id)
-            base_path = os.path.join(MEDIA_ROOT, 'version_management', repo_uuid, 'branches', branch_name)
-            
-            # Ensure target directory exists
-            target_dir = os.path.join(base_path, rel_path)
-            os.makedirs(target_dir, exist_ok=True)
-            
-            file_path = os.path.join(target_dir, uploaded_file.name)
-            
-            # Сохраняем файл
-            with open(file_path, 'wb+') as destination:
-                for chunk in uploaded_file.chunks():
-                    destination.write(chunk)
-            
-            return Response({'success': True, 'message': 'Файл загружен', 'file': uploaded_file.name})
-        
-        return Response(serializer.errors, status=400)
 
     @action(detail=True, methods=['post'])
     def make_default(self, request, pk=None):
