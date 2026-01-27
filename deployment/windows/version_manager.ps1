@@ -48,8 +48,8 @@ switch ($Command.ToLower()) {
   "clone"    { Invoke-Clone -Args $Args }
   "add"      { Invoke-Add -Files $Args }
   "commit"   { Invoke-Commit -MessageArg $Args }
-  "push"     { Invoke-Push -Args $Args }
-  "update"   { Invoke-Update -Args $Args }
+  "push"     { Invoke-Push -BranchArg $Args }
+  "update"   { Invoke-Update -BranchArg $Args }
   "remove"   { Invoke-Remove -Args $Args }
   "create"   { Invoke-Create -RepoArg $Args }
   "download" { Invoke-Download -Args $Args }
