@@ -20,7 +20,7 @@ function Invoke-Clone {
     $repoIdentifier = $Args[0]
   }
   else {
-    Write-Host "[ERROR] Использование: ergovcs clone <путь> <имя_или_uuid>" -ForegroundColor Red
+    Write-Host "[ERROR] Ispolzovanie: ergovcs clone <put> <imya_ili_uuid>" -ForegroundColor Red
     exit 1
   }
 
@@ -28,11 +28,11 @@ function Invoke-Clone {
 
   # 2. Поиск UUID (через API), если передано имя
   if ($repoIdentifier -notmatch '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') {
-    Write-Host "[INFO] Поиск репозитория по имени '$repoIdentifier'..." -ForegroundColor Cyan
+    Write-Host "[INFO] Poisk repozitoriya po imeni '$repoIdentifier'..." -ForegroundColor Cyan
     
     $listResponse = Invoke-ApiListRepositories # Эта функция из repo.ps1 нам все еще НУЖНА
     if (-not $listResponse) {
-      Write-Host "[ERROR] Ошибка API." -ForegroundColor Red
+      Write-Host "[ERROR] Oshibka API." -ForegroundColor Red
       exit 1
     }
     
@@ -43,14 +43,14 @@ function Invoke-Clone {
       
       if ($found) {
         $uuid = if ($found.public_id) { $found.public_id } else { $found.uuid }
-        Write-Host "[INFO] Найден UUID: $uuid" -ForegroundColor Gray
+        Write-Host "[INFO] Najden UUID: $uuid" -ForegroundColor Gray
       } else {
-        Write-Host "[ERROR] Репозиторий не найден." -ForegroundColor Red
+        Write-Host "[ERROR] Repozitorij ne najden." -ForegroundColor Red
         exit 1
       }
     }
     catch {
-      Write-Host "[ERROR] Ошибка обработки ответа API." -ForegroundColor Red
+      Write-Host "[ERROR] Oshibka obrabotki otveta API." -ForegroundColor Red
       exit 1
     }
   }
@@ -77,15 +77,15 @@ function Invoke-Clone {
   }
 
   if (-not $mediaPath) {
-    Write-Host "[ERROR] Не удалось найти папку 'media\version_management'." -ForegroundColor Red
-    Write-Host "[HINT] Зайдите в папку проекта или установите переменную ERGOVCS_MEDIA_PATH" -ForegroundColor Yellow
+    Write-Host "[ERROR] Ne udalos najti papku 'media\version_management'." -ForegroundColor Red
+    Write-Host "[HINT] Zajdite v papku proekta ili ustanovite peremennuyu ERGOVCS_MEDIA_PATH" -ForegroundColor Yellow
     exit 1
   }
 
   $sourceRepoPath = Join-Path $mediaPath $uuid
 
   if (-not (Test-Path $sourceRepoPath)) {
-    Write-Host "[ERROR] Папка репозитория отсутствует на диске: $sourceRepoPath" -ForegroundColor Red
+    Write-Host "[ERROR] Papka repozitoriya otsutstvuet na diske: $sourceRepoPath" -ForegroundColor Red
     exit 1
   }
 
@@ -95,7 +95,7 @@ function Invoke-Clone {
   }
   $absTargetPath = Resolve-Path $targetPath
 
-  Write-Host "[INFO] Копирование файлов из $sourceRepoPath..." -ForegroundColor Cyan
+  Write-Host "[INFO] Kopirovanie fajlov iz $sourceRepoPath..." -ForegroundColor Cyan
   
   # Recurse копирует содержимое
   Copy-Item -Path "$sourceRepoPath\*" -Destination $absTargetPath -Recurse -Force
@@ -126,7 +126,7 @@ function Invoke-Clone {
   }
 
   $configData | ConvertTo-Json -Depth 10 | Set-Content $configFile -Encoding UTF8
-  Write-Host "[OK] Репозиторий клонирован в $absTargetPath" -ForegroundColor Green
+  Write-Host "[OK] Repozitorij klonirovan v $absTargetPath" -ForegroundColor Green
 }
 
 # ============================================================================
@@ -140,14 +140,14 @@ function Invoke-Add {
   # 1. Определить корень репозитория
   $repoRoot = Find-LocalRepositoryRoot
   if (-not $repoRoot) {
-    Write-Host "[ERROR] Не удалось определить корень репозитория." -ForegroundColor Red
+    Write-Host "[ERROR] Ne udalos opredelit koren repozitoriya." -ForegroundColor Red
     exit 1
   }
   
   # 2. Получить UUID репозитория
   $uuid = Get-CurrentRepositoryUuid -LocalPath $repoRoot
   if (-not $uuid) {
-    Write-Host "[ERROR] Не удалось определить UUID репозитория." -ForegroundColor Red
+    Write-Host "[ERROR] Ne udalos opredelit UUID repozitoriya." -ForegroundColor Red
     exit 1
   }
   
@@ -172,7 +172,7 @@ function Invoke-Add {
   
   # 5. Если аргументы не переданы, сканируем всю директорию
   if ($Files.Count -eq 0) {
-    Write-Host "[INFO] Сканирую все файлы и директории (исключая игнорируемые)..." -ForegroundColor Cyan
+    Write-Host "[INFO] Skaniruyu vse fajly i direktorii (isklyuchaya ignoriruemye)..." -ForegroundColor Cyan
     
     # Используем улучшенную функцию с фильтрацией
     # Исключаем .ergovcs директорию из сканирования
@@ -186,11 +186,11 @@ function Invoke-Add {
     }
     
     if ($allItems.Count -eq 0) {
-      Write-Host "[INFO] Нет файлов для добавления (все файлы игнорируются или отсутствуют)." -ForegroundColor Yellow
+      Write-Host "[INFO] Net fajlov dlya dobavleniya (vse fajly ignoriruyutsya ili otsutstvuyut)." -ForegroundColor Yellow
       exit 0
     }
     
-    Write-Host "[INFO] Найдено элементов: $($allItems.Count)" -ForegroundColor Gray
+    Write-Host "[INFO] Najdeno elementov: $($allItems.Count)" -ForegroundColor Gray
     $Files = $allItems
   }
   
@@ -216,7 +216,7 @@ function Invoke-Add {
       }
     }
     catch {
-      Write-Host "[WARNING] Не удалось прочитать существующий staging area." -ForegroundColor Yellow
+      Write-Host "[WARNING] Ne udalos prochitat sushchestvuyushchij staging area." -ForegroundColor Yellow
     }
   }
   
@@ -242,7 +242,7 @@ function Invoke-Add {
       $relativePath = [System.IO.Path]::GetRelativePath($repoRoot, $fullPath).Replace('\', '/')
     }
     catch {
-      Write-Host "[ERROR] Не удалось определить относительный путь: $item" -ForegroundColor Red
+      Write-Host "[ERROR] Ne udalos opredelit otnositelnyj put: $item" -ForegroundColor Red
       $errors += $item
       continue
     }
@@ -250,7 +250,7 @@ function Invoke-Add {
     # Проверяем игнорирование
     if (Test-Ignored -FilePath $relativePath -IgnorePatterns $ignorePatternsArray) {
       $ignoredItems += $relativePath
-      Write-Host "[IGNORE] Игнорировано: $relativePath" -ForegroundColor DarkGray
+      Write-Host "[IGNORE] Ignorirovano: $relativePath" -ForegroundColor DarkGray
       continue
     }
     
@@ -292,7 +292,7 @@ function Invoke-Add {
             $itemEntry.hash = Get-FileContentHash -FilePath $fullPath
           }
           catch {
-            Write-Host "[WARNING] Не удалось прочитать содержимое файла: $relativePath" -ForegroundColor Yellow
+            Write-Host "[WARNING] Ne udalos prochitat soderzhimoe fajla: $relativePath" -ForegroundColor Yellow
           }
         }
       }
@@ -310,7 +310,7 @@ function Invoke-Add {
             }
           }
           catch {
-            Write-Host "[WARNING] Не удалось прочитать содержимое файла: $relativePath" -ForegroundColor Yellow
+            Write-Host "[WARNING] Ne udalos prochitat soderzhimoe fajla: $relativePath" -ForegroundColor Yellow
           }
         }
       }
@@ -348,7 +348,7 @@ function Invoke-Add {
       is_directory = $isDirectory
     }
     
-    Write-Host "[OK] Добавлено: $relativePath ($action)" -ForegroundColor Green
+    Write-Host "[OK] Dobavleno: $relativePath ($action)" -ForegroundColor Green
   }
   
   # 9. Сохранить staging area
@@ -358,7 +358,7 @@ function Invoke-Add {
     
     # Выводим статистику
     if ($addedItems.Count -gt 0) {
-      Write-Host "`n[OK] Статистика добавленных изменений:" -ForegroundColor Green
+      Write-Host "`n[OK] Statistika dobavlennyh izmenenij:" -ForegroundColor Green
       
       $actionGroups = $addedItems | Group-Object -Property action
       foreach ($group in $actionGroups) {
@@ -368,25 +368,25 @@ function Invoke-Add {
         
         Write-Host "  $($group.Name): $count" -ForegroundColor Cyan
         if ($fileCount -gt 0) {
-          Write-Host "    Файлов: $fileCount" -ForegroundColor Gray
+          Write-Host "    Fajlov: $fileCount" -ForegroundColor Gray
         }
         if ($dirCount -gt 0) {
-          Write-Host "    Директорий: $dirCount" -ForegroundColor Gray
+          Write-Host "    Direktorij: $dirCount" -ForegroundColor Gray
         }
       }
     }
     
     if ($ignoredItems.Count -gt 0) {
-      Write-Host "`n[INFO] Проигнорировано: $($ignoredItems.Count)" -ForegroundColor Yellow
+      Write-Host "`n[INFO] Proignorirovano: $($ignoredItems.Count)" -ForegroundColor Yellow
     }
     
     if ($errors.Count -gt 0) {
-      Write-Host "`n[ERROR] Ошибки при обработке: $($errors.Count)" -ForegroundColor Red
+      Write-Host "`n[ERROR] Oshibki pri obrabotke: $($errors.Count)" -ForegroundColor Red
       exit 1
     }
   }
   catch {
-    Write-Host "[ERROR] Не удалось сохранить staging area: $_" -ForegroundColor Red
+    Write-Host "[ERROR] Ne udalos sohranit staging area: $_" -ForegroundColor Red
     exit 1
   }
 }
@@ -431,21 +431,21 @@ function Invoke-Commit {
   # Определить корень репозитория
   $repoRoot = Find-LocalRepositoryRoot
   if (-not $repoRoot) {
-    Write-Host "[ERROR] Не удалось найти репозиторий." -ForegroundColor Red
+    Write-Host "[ERROR] Ne udalos najti repozitorij." -ForegroundColor Red
     exit 1
   }
   
   # 3. Получить UUID текущего репозитория
   $uuid = Get-CurrentRepositoryUuid -LocalPath $repoRoot
   if (-not $uuid) {
-    Write-Host "[ERROR] Не удалось определить UUID репозитория." -ForegroundColor Red
+    Write-Host "[ERROR] Ne udalos opredelit UUID repozitoriya." -ForegroundColor Red
     exit 1
   }
   
   # 4. Прочитать staging area
   $stagingFile = Join-Path $repoRoot ".ergovcs" "staging.json"
   if (-not (Test-Path $stagingFile)) {
-    Write-Host "[ERROR] Staging area не найден." -ForegroundColor Red
+    Write-Host "[ERROR] Staging area ne najden." -ForegroundColor Red
     exit 1
   }
   
@@ -454,20 +454,20 @@ function Invoke-Commit {
     $staging = $stagingJson | ConvertFrom-Json -ErrorAction Stop
   }
   catch {
-    Write-Host "[ERROR] Не удалось прочитать staging area: $_" -ForegroundColor Red
+    Write-Host "[ERROR] Ne udalos prochitat staging area: $_" -ForegroundColor Red
     exit 1
   }
   
   if (-not $staging.files -or $staging.files.Count -eq 0) {
-    Write-Host "[ERROR] Нет файлов в staging area." -ForegroundColor Red
+    Write-Host "[ERROR] Net fajlov v staging area." -ForegroundColor Red
     exit 1
   }
   
   if ([string]::IsNullOrWhiteSpace($message)) {
-    Write-Host "[INFO] Введите сообщение коммита:" -ForegroundColor Cyan
-    $message = Read-Host "Сообщение"
+    Write-Host "[INFO] Vvedite soobshchenie kommita:" -ForegroundColor Cyan
+    $message = Read-Host "Message"
     if ([string]::IsNullOrWhiteSpace($message)) {
-      Write-Host "[ERROR] Сообщение коммита не может быть пустым." -ForegroundColor Red
+      Write-Host "[ERROR] Soobshchenie kommita ne mozhet byt pustym." -ForegroundColor Red
       exit 1
     }
   }
@@ -489,7 +489,7 @@ function Invoke-Commit {
   $response = Invoke-ApiCreateCommit -Uuid $uuid -Message $message -Files $filesForApi -Branch $currentBranch
   
   if (-not $response) {
-    Write-Host "[ERROR] Не удалось создать коммит через API." -ForegroundColor Red
+    Write-Host "[ERROR] Ne udalos sozdat kommit cherez API." -ForegroundColor Red
     exit 1
   }
   
@@ -497,7 +497,7 @@ function Invoke-Commit {
     $res = $response | ConvertFrom-Json -ErrorAction Stop
   }
   catch {
-    Write-Host "[ERROR] Неверный ответ API: $_" -ForegroundColor Red
+    Write-Host "[ERROR] Nevernyj otvet API: $_" -ForegroundColor Red
     exit 1
   }
   
@@ -507,18 +507,18 @@ function Invoke-Commit {
   }
   
   $commit = $res.commit
-  Write-Host "`n[OK] Коммит создан через API." -ForegroundColor Green
+  Write-Host "`n[OK] Kommit sozdan cherez API." -ForegroundColor Green
   if ($commit) {
-    Write-Host "Хеш: $($commit.hash)" -ForegroundColor Cyan
-    Write-Host "Сообщение: $($commit.message)" -ForegroundColor Cyan
-    Write-Host "Файлов: $($commit.files_count)" -ForegroundColor Cyan
-    if ($commit.author) { Write-Host "Автор: $($commit.author)" -ForegroundColor Cyan }
+    Write-Host "Hash: $($commit.hash)" -ForegroundColor Cyan
+    Write-Host "Message: $($commit.message)" -ForegroundColor Cyan
+    Write-Host "Files: $($commit.files_count)" -ForegroundColor Cyan
+    if ($commit.author) { Write-Host "Author: $($commit.author)" -ForegroundColor Cyan }
   }
   
   $emptyStaging = @{ repository_uuid = $uuid; files = @() }
   Set-Content -Path $stagingFile -Value ($emptyStaging | ConvertTo-Json -Depth 10) -Encoding UTF8 -Force
-  Write-Host "[INFO] Staging area очищен." -ForegroundColor Cyan
-  Write-Host "[INFO] Используйте команду 'push' для отправки коммита на сервер." -ForegroundColor Yellow
+  Write-Host "[INFO] Staging area ochishchen." -ForegroundColor Cyan
+  Write-Host "[INFO] Ispolzujte komandu 'push' dlya otpravki kommita na server." -ForegroundColor Yellow
 }
 
 # ============================================================================
@@ -536,30 +536,30 @@ function Invoke-Push {
   }
 
   if (-not $branch) {
-    Write-Host "[ERROR] Необходимо указать название ветки" -ForegroundColor Red
-    Write-Host "Использование: ergovcs push <ветка>" -ForegroundColor Yellow
+    Write-Host "[ERROR] Neobhodimo ukazat nazvanie vetki" -ForegroundColor Red
+    Write-Host "Usage: ergovcs push <branch>" -ForegroundColor Yellow
     exit 1
   }
 
   # 2. Определить корень репозитория
   $repoRoot = Find-LocalRepositoryRoot
   if (-not $repoRoot) {
-    Write-Host "[ERROR] Не удалось найти репозиторий. Убедитесь, что вы находитесь в директории репозитория." -ForegroundColor Red
+    Write-Host "[ERROR] Ne udalos najti repozitorij. Ubedites chto vy nahodites v direktorii repozitoriya." -ForegroundColor Red
     exit 1
   }
 
   # 3. Получить UUID текущего репозитория
   $uuid = Get-CurrentRepositoryUuid -LocalPath $repoRoot
   if (-not $uuid) {
-    Write-Host "[ERROR] Не удалось определить UUID репозитория." -ForegroundColor Red
-    Write-Host "[INFO] Убедитесь, что репозиторий был клонирован или создан через команду clone/create." -ForegroundColor Yellow
+    Write-Host "[ERROR] Ne udalos opredelit UUID repozitoriya." -ForegroundColor Red
+    Write-Host "[INFO] Ubedites chto repozitorij byl klonirovan ili sozdan cherez komandu clone/create." -ForegroundColor Yellow
     exit 1
   }
 
   # 4. Прочитать коммит из commit.json
   $commitFile = Join-Path $repoRoot ".ergovcs" "commit.json"
   if (-not (Test-Path $commitFile)) {
-    Write-Host "[ERROR] Нет коммита для отправки. Создайте коммит с помощью команды 'commit'." -ForegroundColor Red
+    Write-Host "[ERROR] Net kommita dlya otpravki. Sozdajte kommit s pomoshchyu komandy 'commit'." -ForegroundColor Red
     exit 1
   }
 
@@ -568,12 +568,12 @@ function Invoke-Push {
     $commit = $commitJson | ConvertFrom-Json -ErrorAction Stop
     
     if (-not $commit.files -or $commit.files.Count -eq 0) {
-      Write-Host "[ERROR] Коммит не содержит файлов для отправки." -ForegroundColor Red
+      Write-Host "[ERROR] Kommit ne soderzhit fajlov dlya otpravki." -ForegroundColor Red
       exit 1
     }
   }
   catch {
-    Write-Host "[ERROR] Не удалось прочитать коммит: $_" -ForegroundColor Red
+    Write-Host "[ERROR] Ne udalos prochitat kommit: $_" -ForegroundColor Red
     exit 1
   }
 
@@ -591,42 +591,42 @@ function Invoke-Push {
   $commitDataJson = $commitData | ConvertTo-Json -Depth 10
 
   # 6. Вызвать API эндпоинт для отправки
-  Write-Host "[INFO] Отправка коммита в ветку '$branch'..." -ForegroundColor Cyan
+  Write-Host "[INFO] Otpravka kommita v vetku '$branch'..." -ForegroundColor Cyan
   
   $response = Invoke-ApiPushChanges -Uuid $uuid -Branch $branch -CommitData $commitDataJson
   
   if (-not $response) {
-    Write-Host "[ERROR] Не удалось отправить изменения. Проверьте подключение к API." -ForegroundColor Red
+    Write-Host "[ERROR] Ne udalos otpravit izmeneniya. Proverte podklyuchenie k API." -ForegroundColor Red
     exit 1
   }
 
   try {
     $responseObj = $response | ConvertFrom-Json
     
-    if ($responseObj.status -eq "success" -or $responseObj.detail -match "успешно") {
-      Write-Host "[OK] Изменения успешно отправлены на сервер." -ForegroundColor Green
+    if ($responseObj.status -eq "success" -or $responseObj.detail -match "uspeshno") {
+      Write-Host "[OK] Izmeneniya uspeshno otpravleny na server." -ForegroundColor Green
       
       # 7. Создать backup.json
       Save-BackupJson -LocalPath $repoRoot -RepoUuid $uuid
       
       # 8. Удалить commit.json после успешной отправки
       Remove-Item -Path $commitFile -Force -ErrorAction SilentlyContinue
-      Write-Host "[INFO] Файл коммита удален." -ForegroundColor Gray
+      Write-Host "[INFO] Fajl kommita udalen." -ForegroundColor Gray
       
       # 9. Обновить информацию в конфиге
       Update-RepositoryConfig -Uuid $uuid -LastUpdated (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ") -CurrentBranch $branch
       
-      Write-Host "`n[SUCCESS] Коммит успешно отправлен в ветку '$branch'" -ForegroundColor Green
-      Write-Host "Сообщение: $($commit.message)" -ForegroundColor Cyan
-      Write-Host "Автор: $($commit.author)" -ForegroundColor Cyan
-      Write-Host "Изменения: $($commit.change_summary)" -ForegroundColor Cyan
+      Write-Host "`n[SUCCESS] Kommit uspeshno otpravlen v vetku '$branch'" -ForegroundColor Green
+      Write-Host "Message: $($commit.message)" -ForegroundColor Cyan
+      Write-Host "Author: $($commit.author)" -ForegroundColor Cyan
+      Write-Host "Changes: $($commit.change_summary)" -ForegroundColor Cyan
     } else {
-      Write-Host "[ERROR] API вернул ошибку: $($responseObj.detail)" -ForegroundColor Red
+      Write-Host "[ERROR] API vernul oshibku: $($responseObj.detail)" -ForegroundColor Red
       exit 1
     }
   }
   catch {
-      Write-Host "[ERROR] Не удалось обработать ответ от API: $_" -ForegroundColor Red
+      Write-Host "[ERROR] Ne udalos obrabotat otvet ot API: $_" -ForegroundColor Red
       exit 1
   }
 }
@@ -641,7 +641,7 @@ function Invoke-Update {
 
   # 1. Получить ветку
   if ($BranchArg.Count -eq 0) {
-    Write-Host "[ERROR] Использование: ergovcs update <ветка>" -ForegroundColor Red
+    Write-Host "[ERROR] Usage: ergovcs update <branch>" -ForegroundColor Red
     exit 1
   }
   $branch = $BranchArg[0]
@@ -649,18 +649,18 @@ function Invoke-Update {
   # 2. Определить корень репозитория
   $repoRoot = Find-LocalRepositoryRoot
   if (-not $repoRoot) {
-    Write-Host "[ERROR] Не в репозитории. Используйте 'clone' сначала." -ForegroundColor Red
+    Write-Host "[ERROR] Ne v repozitorii. Ispolzujte 'clone' snachala." -ForegroundColor Red
     exit 1
   }
 
   # 3. Получить UUID и путь к репозиторию
   $uuid = Get-CurrentRepositoryUuid -LocalPath $repoRoot
   if (-not $uuid) {
-    Write-Host "[ERROR] UUID не найден. Репозиторий не инициализирован." -ForegroundColor Red
+    Write-Host "[ERROR] UUID ne najden. Repozitorij ne inicializirovan." -ForegroundColor Red
     exit 1
   }
 
-  Write-Host "[INFO] Запрос обновлений из ветки '$branch'..." -ForegroundColor Cyan
+  Write-Host "[INFO] Zapros obnovlenij iz vetki '$branch'..." -ForegroundColor Cyan
 
   # 4. Сохранить текущее состояние staging area (если есть)
   $stagingFile = Join-Path $repoRoot ".ergovcs" "staging.json"
@@ -671,10 +671,10 @@ function Invoke-Update {
       $stagingBackup = $stagingJson | ConvertFrom-Json -ErrorAction Stop
       $stagingBackupPath = Join-Path $repoRoot ".ergovcs" "staging.backup.json"
       $stagingJson | Set-Content -Path $stagingBackupPath -Encoding UTF8
-      Write-Host "[INFO] Staging area сохранен для восстановления." -ForegroundColor Gray
+      Write-Host "[INFO] Staging area sohranen dlya vosstanovleniya." -ForegroundColor Gray
     }
     catch {
-      Write-Host "[WARNING] Не удалось сохранить staging area: $_" -ForegroundColor Yellow
+      Write-Host "[WARNING] Ne udalos sohranit staging area: $_" -ForegroundColor Yellow
     }
   }
 
@@ -682,13 +682,13 @@ function Invoke-Update {
   $response = Invoke-ApiUpdateRepository -Uuid $uuid -Branch $branch
   
   if (-not $response) {
-    Write-Host "[ERROR] Ошибка API при обновлении" -ForegroundColor Red
+    Write-Host "[ERROR] Oshibka API pri obnovlenii" -ForegroundColor Red
     
     # Восстановить staging area
     if ($stagingBackup) {
       $stagingBackupJson = $stagingBackup | ConvertTo-Json -Depth 10
       Set-Content -Path $stagingFile -Value $stagingBackupJson -Encoding UTF8
-      Write-Host "[INFO] Staging area восстановлен." -ForegroundColor Gray
+      Write-Host "[INFO] Staging area vosstanovlen." -ForegroundColor Gray
     }
     
     exit 1
@@ -699,7 +699,7 @@ function Invoke-Update {
     $result = $response | ConvertFrom-Json
     
     if ($result.files -and $result.files.Count -gt 0) {
-      Write-Host "[OK] Получено $($result.files.Count) файлов для обновления" -ForegroundColor Green
+      Write-Host "[OK] Polucheno $($result.files.Count) fajlov dlya obnovleniya" -ForegroundColor Green
       $updatedCount = 0
       $addedCount = 0
       $deletedCount = 0
@@ -752,16 +752,16 @@ function Invoke-Update {
       # 9. Обновить конфиг
       Update-RepositoryConfig -Uuid $uuid -LastUpdated (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ") -CurrentBranch $branch
       
-      Write-Host "`n[SUCCESS] Локальный репозиторий обновлен" -ForegroundColor Green
-      Write-Host "Добавлено: $addedCount файлов" -ForegroundColor Green
-      Write-Host "Обновлено: $updatedCount файлов" -ForegroundColor Yellow
-      Write-Host "Удалено: $deletedCount файлов" -ForegroundColor Red
+      Write-Host "`n[SUCCESS] Lokalnyj repozitorij obnovlen" -ForegroundColor Green
+      Write-Host "Added: $addedCount files" -ForegroundColor Green
+      Write-Host "Updated: $updatedCount files" -ForegroundColor Yellow
+      Write-Host "Deleted: $deletedCount files" -ForegroundColor Red
     }
     elseif ($result.message -or $result.detail) {
       Write-Host "[INFO] $($result.message)$($result.detail)" -ForegroundColor Cyan
     }
     else {
-      Write-Host "[INFO] Нет новых изменений в ветке '$branch'" -ForegroundColor Yellow
+      Write-Host "[INFO] Net novyh izmenenij v vetke '$branch'" -ForegroundColor Yellow
       
       # Все равно обновляем backup.json
       Save-BackupJson -LocalPath $repoRoot -RepoUuid $uuid
@@ -774,14 +774,14 @@ function Invoke-Update {
     }
   }
   catch {
-    Write-Host "[WARNING] Ответ API не в JSON формате: $response" -ForegroundColor Yellow
-    Write-Host "[ERROR] Ошибка при обработке ответа: $_" -ForegroundColor Red
+    Write-Host "[WARNING] Otvet API ne v JSON formate: $response" -ForegroundColor Yellow
+    Write-Host "[ERROR] Oshibka pri obrabotke otveta: $_" -ForegroundColor Red
     
     # Восстановить staging area
     if ($stagingBackup) {
       $stagingBackupJson = $stagingBackup | ConvertTo-Json -Depth 10
       Set-Content -Path $stagingFile -Value $stagingBackupJson -Encoding UTF8
-      Write-Host "[INFO] Staging area восстановлен." -ForegroundColor Gray
+      Write-Host "[INFO] Staging area vosstanovlen." -ForegroundColor Gray
     }
       
     exit 1
@@ -809,13 +809,13 @@ function Invoke-Remove {
   }
 
   if (-not $uuid) {
-    Write-Host "[ERROR] Необходимо указать UUID репозитория" -ForegroundColor Red
-    Write-Host "Использование: ergovcs remove <UUID>" -ForegroundColor Yellow
+    Write-Host "[ERROR] Neobhodimo ukazat UUID repozitoriya" -ForegroundColor Red
+    Write-Host "Usage: ergovcs remove <UUID>" -ForegroundColor Yellow
     exit 1
   }
 
   # TODO: Реализовать удаление локальной копии
-  Write-Host "[INFO] Удаление локальной копии репозитория $uuid..." -ForegroundColor Cyan
+  Write-Host "[INFO] Udalenie lokalnoj kopii repozitoriya $uuid..." -ForegroundColor Cyan
 
   if (Test-Path -LiteralPath $localPath) {
     try {
@@ -825,15 +825,15 @@ function Invoke-Remove {
       } else {
         Remove-Item -LiteralPath $localPath -Force -ErrorAction Stop
       }
-      Write-Host "[OK] Локальная копия удалена: $localPath" -ForegroundColor Green
+      Write-Host "[OK] Lokalnaya kopiya udalena: $localPath" -ForegroundColor Green
     } catch {
-      Write-Host "[ERROR] Не удалось удалить локальную копию: $localPath" -ForegroundColor Red
+      Write-Host "[ERROR] Ne udalos udalit lokalnuyu kopiyu: $localPath" -ForegroundColor Red
       Write-Host $_.Exception.Message -ForegroundColor Yellow
       exit 1
     }
   } else {
-    Write-Host "[WARN] Локальный путь не найден на диске: $localPath" -ForegroundColor Yellow
-    Write-Host "[INFO] Запись всё равно будет удалена из конфига." -ForegroundColor Yellow
+    Write-Host "[WARN] Lokalnyj put ne najden na diske: $localPath" -ForegroundColor Yellow
+    Write-Host "[INFO] Zapis vse ravno budet udalena iz konfiga." -ForegroundColor Yellow
   }
 
   # Удаляем запись из repos.json
@@ -843,9 +843,9 @@ function Invoke-Remove {
   try {
     $jsonOut = $data | ConvertTo-Json -Depth 10
     $jsonOut | Set-Content -Path $reposFile -Encoding UTF8
-    Write-Host "[OK] Запись удалена из конфига: $reposFile" -ForegroundColor Green
+    Write-Host "[OK] Zapis udalena iz konfiga: $reposFile" -ForegroundColor Green
   } catch {
-    Write-Host "[ERROR] Не удалось обновить файл конфига: $reposFile" -ForegroundColor Red
+    Write-Host "[ERROR] Ne udalos obnovit fajl konfiga: $reposFile" -ForegroundColor Red
     Write-Host $_.Exception.Message -ForegroundColor Yellow
     exit 1
   }
@@ -883,14 +883,14 @@ function Invoke-Create {
         $i++
         if ($i -lt $RepoArg.Count) {
           $localPath = $RepoArg[$i]
-          Write-Host "[INFO] Указан локальный путь: $localPath" -ForegroundColor Cyan
+          Write-Host "[INFO] Ukazan lokalnyj put: $localPath" -ForegroundColor Cyan
         }
       }
       "-r" {
         $i++
         if ($i -lt $RepoArg.Count) {
           $localPath = $RepoArg[$i]
-          Write-Host "[INFO] Указан локальный путь: $localPath" -ForegroundColor Cyan
+          Write-Host "[INFO] Ukazan lokalnyj put: $localPath" -ForegroundColor Cyan
         }
       }
       default {
@@ -902,10 +902,10 @@ function Invoke-Create {
   }
 
   if (-not $name) {
-    $name = Read-Host "Название репозитория"
+    $name = Read-Host "Repository name"
   }
   if (-not $name) {
-    Write-Host "[ERROR] Необходимо указать название репозитория" -ForegroundColor Red
+    Write-Host "[ERROR] Neobhodimo ukazat nazvanie repozitoriya" -ForegroundColor Red
     exit 1
   }
 
@@ -920,7 +920,7 @@ function Invoke-Create {
 
   if ($cliUsername -or $cliPassword) {
     if (-not $cliUsername -or -not $cliPassword) {
-      Write-Host "[WARN] Для авторизации нужны --username и --password (оба)." -ForegroundColor Yellow
+      Write-Host "[WARN] Dlya avtorizacii nuzhny --username i --password (oba)." -ForegroundColor Yellow
     }
   }
 
@@ -935,11 +935,11 @@ function Invoke-Create {
 
   $bodyJson = $bodyObj | ConvertTo-Json -Depth 5
 
-  Write-Host "[INFO] Создание репозитория через API..." -ForegroundColor Cyan
+  Write-Host "[INFO] Sozdanie repozitoriya cherez API..." -ForegroundColor Cyan
   $response = Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/" -Body $bodyJson
 
   if (-not $response) {
-    Write-Host "[ERROR] Не удалось создать репозиторий" -ForegroundColor Red
+    Write-Host "[ERROR] Ne udalos sozdat repozitorij" -ForegroundColor Red
     exit 1
   }
 
@@ -996,21 +996,21 @@ function Invoke-Create {
       ) -join "`r`n" | Set-Content -Path $readmeFile -Encoding ASCII
     }
 
-    Write-Host "[OK] Репозиторий создан и добавлен в конфигурацию." -ForegroundColor Green
+    Write-Host "[OK] Repozitorij sozdan i dobavlen v konfiguraciyu." -ForegroundColor Green
     Write-Host "UUID: $repoId"
-    Write-Host "Название: $repoName"
-    Write-Host "Локальный путь: $localPath"
-    Write-Host "Удаленный путь: $repoPath"
-    Write-Host "Конфигурация сохранена в: $reposJsonPath"
+    Write-Host "Name: $repoName"
+    Write-Host "Local path: $localPath"
+    Write-Host "Remote path: $repoPath"
+    Write-Host "Config saved to: $reposJsonPath"
 
     if ($createdAt) {
-      Write-Host "Создан: $createdAt"
+      Write-Host "Created: $createdAt"
     }
   }
   catch {
-    Write-Host "[ERROR] Не удалось распарсить ответ от API или создать конфигурацию" -ForegroundColor Red
-    Write-Host "Ошибка: $_" -ForegroundColor Red
-    Write-Host "Ответ от API: $response" -ForegroundColor Yellow
+    Write-Host "[ERROR] Ne udalos rasparsit otvet ot API ili sozdat konfiguraciyu" -ForegroundColor Red
+    Write-Host "Error: $_" -ForegroundColor Red
+    Write-Host "API response: $response" -ForegroundColor Yellow
     exit 1
   }
 }
@@ -1041,12 +1041,12 @@ function Invoke-Download {
   }
 
   if (-not $source) {
-    Write-Host "[ERROR] Нужно указать --source" -ForegroundColor Red
+    Write-Host "[ERROR] Nuzhno ukazat --source" -ForegroundColor Red
     exit 1
   }
 
   if (-not (Test-Path $source)) {
-    Write-Host "[ERROR] Источник не найден: $source" -ForegroundColor Red
+    Write-Host "[ERROR] Istochnik ne najden: $source" -ForegroundColor Red
     exit 1
   }
 
@@ -1056,9 +1056,9 @@ function Invoke-Download {
   Import-FromSource -Source $source -Target $target
   if ($name) { Save-Metadata -Target $target -Name $name -Description "" }
 
-  Write-Host "[OK] Репозиторий импортирован." -ForegroundColor Green
+  Write-Host "[OK] Repozitorij importirovan." -ForegroundColor Green
   Write-Host "UUID: $uuid"
-  Write-Host "Путь: $target"
+  Write-Host "Path: $target"
 }
 
 # ============================================================================
@@ -1069,7 +1069,7 @@ function Invoke-Branch {
 param([string[]]$Args)
 
 if (-not $Args -or $Args.Count -eq 0) {
-  Write-Host "[ERROR] Использование: ergovcs branch <list|create|delete|set-default>" -ForegroundColor Red
+  Write-Host "[ERROR] Usage: ergovcs branch <list|create|delete|set-default>" -ForegroundColor Red
   exit 1
 }
 
@@ -1096,14 +1096,14 @@ for ($i = 1; $i -lt $Args.Count; $i++) {
 
 if ($cliUsername -or $cliPassword) {
   if (-not $cliUsername -or -not $cliPassword) {
-    Write-Host "[WARN] Для авторизации нужны --username и --password (оба)." -ForegroundColor Yellow
+    Write-Host "[WARN] Dlya avtorizacii nuzhny --username i --password (oba)." -ForegroundColor Yellow
   }
 }
 
 switch ($action) {
   "list" {
     if (-not $repoUuid) {
-      Write-Host "[ERROR] Нужно указать --repo <UUID>" -ForegroundColor Red
+      Write-Host "[ERROR] Nuzhno ukazat --repo <UUID>" -ForegroundColor Red
       exit 1
     }
     $response = Invoke-ApiListBranches -RepoUuid $repoUuid
@@ -1116,11 +1116,11 @@ switch ($action) {
   }
   "create" {
     if (-not $repoUuid -or -not $branchName) {
-      Write-Host "[ERROR] Нужно указать --repo <UUID> и --name <ветка>" -ForegroundColor Red
+      Write-Host "[ERROR] Nuzhno ukazat --repo <UUID> i --name <branch>" -ForegroundColor Red
       exit 1
     }
     Invoke-ApiCreateBranch -RepoUuid $repoUuid -BranchName $branchName -CliUsername $cliUsername -CliPassword $cliPassword -CheckPermissions:$checkPermissions | Out-Null
-    Write-Host "[OK] Ветка создана: $branchName" -ForegroundColor Green
+    Write-Host "[OK] Vetka sozdana: $branchName" -ForegroundColor Green
   }
   "delete" {
     if (-not $branchId) {
@@ -1135,28 +1135,28 @@ switch ($action) {
       }
     }
     if (-not $branchId) {
-      Write-Host "[ERROR] Нужно указать --id <branch_id> (или --repo + --name для поиска)" -ForegroundColor Red
+      Write-Host "[ERROR] Nuzhno ukazat --id <branch_id> (ili --repo + --name dlya poiska)" -ForegroundColor Red
       exit 1
     }
     Invoke-ApiDeleteBranch -BranchId $branchId | Out-Null
-    Write-Host "[OK] Ветка удалена (id=$branchId)" -ForegroundColor Green
+    Write-Host "[OK] Vetka udalena (id=$branchId)" -ForegroundColor Green
   }
   "set-default" {
     if ($branchId) {
       Invoke-ApiSetDefaultBranchById -BranchId $branchId -CliUsername $cliUsername -CliPassword $cliPassword -CheckPermissions:$checkPermissions | Out-Null
-      Write-Host "[OK] Ветка установлена по умолчанию (id=$branchId)" -ForegroundColor Green
+      Write-Host "[OK] Vetka ustanovlena po umolchaniyu (id=$branchId)" -ForegroundColor Green
     }
     elseif ($repoUuid -and $branchName) {
       Invoke-ApiSetDefaultBranchByName -RepoUuid $repoUuid -BranchName $branchName -CliUsername $cliUsername -CliPassword $cliPassword -CheckPermissions:$checkPermissions | Out-Null
-      Write-Host "[OK] Ветка установлена по умолчанию: $branchName" -ForegroundColor Green
+      Write-Host "[OK] Vetka ustanovlena po umolchaniyu: $branchName" -ForegroundColor Green
     }
     else {
-      Write-Host "[ERROR] Нужно указать --id <branch_id> или --repo <UUID> и --name <ветка>" -ForegroundColor Red
+      Write-Host "[ERROR] Nuzhno ukazat --id <branch_id> ili --repo <UUID> i --name <branch>" -ForegroundColor Red
       exit 1
     }
   }
   default {
-    Write-Host "[ERROR] Неизвестное действие: $action" -ForegroundColor Red
+    Write-Host "[ERROR] Neizvestnoe dejstvie: $action" -ForegroundColor Red
     exit 1
   }
 }
@@ -1177,7 +1177,7 @@ for ($i = 0; $i -lt $Args.Count; $i++) {
 }
 
 if (-not $repoUuid) {
-  Write-Host "[ERROR] Нужно указать --repo <UUID>" -ForegroundColor Red
+  Write-Host "[ERROR] Nuzhno ukazat --repo <UUID>" -ForegroundColor Red
   exit 1
 }
 
@@ -1192,11 +1192,11 @@ function Render-Tree($items, $prefix) {
   for ($i = 0; $i -lt $items.Count; $i++) {
     $item = $items[$i]
     $isLast = ($i -eq $items.Count - 1)
-    $connector = if ($isLast) { "└── " } else { "├── " }
+    $connector = if ($isLast) { "+-- " } else { "|-- " }
     $name = $item.name
     if ($item.is_directory) {
       Write-Host "$prefix$connector$name/"
-      $nextPrefix = $prefix + (if ($isLast) { "    " } else { "│   " })
+      $nextPrefix = $prefix + (if ($isLast) { "    " } else { "|   " })
       Render-Tree $item.items $nextPrefix
     } else {
       Write-Host "$prefix$connector$name"
@@ -1235,15 +1235,15 @@ function Invoke-Stats {
   }
   
   if (-not $repoUuid) {
-    Write-Host "[ERROR] Нужно указать --repo <UUID> или выполнить команду в директории репозитория" -ForegroundColor Red
+    Write-Host "[ERROR] Nuzhno ukazat --repo <UUID> ili vypolnit komandu v direktorii repozitoriya" -ForegroundColor Red
     exit 1
   }
   
-  Write-Host "[INFO] Получение статистики репозитория $repoUuid..." -ForegroundColor Cyan
+  Write-Host "[INFO] Poluchenie statistiki repozitoriya $repoUuid..." -ForegroundColor Cyan
   
   $response = Invoke-ApiGetStats -RepoUuid $repoUuid
   if (-not $response) {
-    Write-Host "[ERROR] Не удалось получить статистику" -ForegroundColor Red
+    Write-Host "[ERROR] Ne udalos poluchit statistiku" -ForegroundColor Red
     exit 1
   }
   
@@ -1255,35 +1255,35 @@ function Invoke-Stats {
   try {
     $data = $response | ConvertFrom-Json
     
-    Write-Host "`n========== СТАТИСТИКА РЕПОЗИТОРИЯ ==========" -ForegroundColor Green
-    Write-Host "Репозиторий: $($data.repository_name)" -ForegroundColor Cyan
+    Write-Host "`n========== REPOSITORY STATISTICS ==========" -ForegroundColor Green
+    Write-Host "Repository: $($data.repository_name)" -ForegroundColor Cyan
     Write-Host "UUID: $($data.repository_uuid)" -ForegroundColor Gray
     Write-Host ""
     
     # Общая статистика
-    Write-Host "--- Общая статистика ---" -ForegroundColor Yellow
-    Write-Host "  Общий размер: $($data.total_size_human)"
-    Write-Host "  Всего файлов: $($data.total_files)"
-    Write-Host "  Всего коммитов: $($data.total_commits)"
-    Write-Host "  Количество веток: $($data.branches_count)"
+    Write-Host "--- General Statistics ---" -ForegroundColor Yellow
+    Write-Host "  Total size: $($data.total_size_human)"
+    Write-Host "  Total files: $($data.total_files)"
+    Write-Host "  Total commits: $($data.total_commits)"
+    Write-Host "  Branches count: $($data.branches_count)"
     Write-Host ""
     
     # Статистика по типам файлов
     if ($data.files_by_extension) {
-      Write-Host "--- Файлы по расширениям ---" -ForegroundColor Yellow
+      Write-Host "--- Files by Extension ---" -ForegroundColor Yellow
       $extensions = $data.files_by_extension.PSObject.Properties | Sort-Object { $_.Value } -Descending
       foreach ($ext in $extensions | Select-Object -First 10) {
         $size = if ($data.size_by_extension."$($ext.Name)") {
           $data.size_by_extension_human."$($ext.Name)"
         } else { "N/A" }
-        Write-Host ("  {0,-15} {1,6} файлов ({2})" -f $ext.Name, $ext.Value, $size)
+        Write-Host ("  {0,-15} {1,6} files ({2})" -f $ext.Name, $ext.Value, $size)
       }
       Write-Host ""
     }
     
     # Топ-5 тяжёлых файлов
     if ($data.largest_files -and $data.largest_files.Count -gt 0) {
-      Write-Host "--- Топ-5 тяжёлых файлов ---" -ForegroundColor Yellow
+      Write-Host "--- Top 5 Largest Files ---" -ForegroundColor Yellow
       foreach ($file in $data.largest_files | Select-Object -First 5) {
         Write-Host ("  {0,-40} {1}" -f $file.path, $file.size_human)
       }
@@ -1292,8 +1292,8 @@ function Invoke-Stats {
     
     # Кандидаты для холодного хранилища
     if ($data.cold_storage_candidates -and $data.cold_storage_candidates.Count -gt 0) {
-      Write-Host "--- Кандидаты для холодного хранилища ---" -ForegroundColor Yellow
-      Write-Host "  Найдено кандидатов: $($data.cold_storage_candidates.Count)" -ForegroundColor Cyan
+      Write-Host "--- Cold Storage Candidates ---" -ForegroundColor Yellow
+      Write-Host "  Found candidates: $($data.cold_storage_candidates.Count)" -ForegroundColor Cyan
       foreach ($candidate in $data.cold_storage_candidates | Select-Object -First 5) {
         $reasons = $candidate.reasons -join ", "
         Write-Host ("  [{0,2}] {1,-35} {2} ({3})" -f $candidate.priority, $candidate.path, $candidate.size_human, $reasons)
@@ -1301,11 +1301,11 @@ function Invoke-Stats {
       Write-Host ""
     }
     
-    Write-Host "Время анализа: $($data.analysis_duration_ms) мс" -ForegroundColor Gray
+    Write-Host "Analysis time: $($data.analysis_duration_ms) ms" -ForegroundColor Gray
     Write-Host "=============================================" -ForegroundColor Green
   }
   catch {
-    Write-Host "[ERROR] Не удалось обработать ответ: $_" -ForegroundColor Red
+    Write-Host "[ERROR] Ne udalos obrabotat otvet: $_" -ForegroundColor Red
     Write-Host $response
     exit 1
   }
@@ -1342,15 +1342,15 @@ function Invoke-Forecast {
   }
   
   if (-not $repoUuid) {
-    Write-Host "[ERROR] Нужно указать --repo <UUID> или выполнить команду в директории репозитория" -ForegroundColor Red
+    Write-Host "[ERROR] Nuzhno ukazat --repo <UUID> ili vypolnit komandu v direktorii repozitoriya" -ForegroundColor Red
     exit 1
   }
   
-  Write-Host "[INFO] Получение прогноза для репозитория $repoUuid (период: $days дней)..." -ForegroundColor Cyan
+  Write-Host "[INFO] Poluchenie prognoza dlya repozitoriya $repoUuid (period: $days dnej)..." -ForegroundColor Cyan
   
   $response = Invoke-ApiGetForecast -RepoUuid $repoUuid -Days $days
   if (-not $response) {
-    Write-Host "[ERROR] Не удалось получить прогноз" -ForegroundColor Red
+    Write-Host "[ERROR] Ne udalos poluchit prognoz" -ForegroundColor Red
     exit 1
   }
   
@@ -1362,21 +1362,21 @@ function Invoke-Forecast {
   try {
     $data = $response | ConvertFrom-Json
     
-    Write-Host "`n========== ПРОГНОЗ РОСТА РЕПОЗИТОРИЯ ==========" -ForegroundColor Green
-    Write-Host "Репозиторий: $($data.repository_name)" -ForegroundColor Cyan
+    Write-Host "`n========== REPOSITORY GROWTH FORECAST ==========" -ForegroundColor Green
+    Write-Host "Repository: $($data.repository_name)" -ForegroundColor Cyan
     Write-Host "UUID: $($data.repository_uuid)" -ForegroundColor Gray
     Write-Host ""
     
     # Текущее состояние
-    Write-Host "--- Текущее состояние ---" -ForegroundColor Yellow
-    Write-Host "  Текущий размер: $($data.current_size_human)"
-    Write-Host "  Период анализа: $($data.analysis_period_days) дней"
+    Write-Host "--- Current State ---" -ForegroundColor Yellow
+    Write-Host "  Current size: $($data.current_size_human)"
+    Write-Host "  Analysis period: $($data.analysis_period_days) days"
     Write-Host ""
     
     # Прогноз
     if ($data.forecast) {
-      Write-Host "--- Прогноз на $($data.forecast.forecast_days) дней ---" -ForegroundColor Yellow
-      Write-Host "  Уверенность: $($data.forecast.confidence)" -ForegroundColor $(
+      Write-Host "--- Forecast for $($data.forecast.forecast_days) days ---" -ForegroundColor Yellow
+      Write-Host "  Confidence: $($data.forecast.confidence)" -ForegroundColor $(
         switch ($data.forecast.confidence) {
           "very_high" { "Green" }
           "high" { "Green" }
@@ -1384,44 +1384,43 @@ function Invoke-Forecast {
           default { "Red" }
         }
       )
-      Write-Host "  Скользящее среднее (7 дней): $($data.forecast.moving_average_7d_human)/день"
-      Write-Host "  Скользящее среднее (30 дней): $($data.forecast.moving_average_30d_human)/день"
-      Write-Host "  Тренд: $($data.forecast.daily_trend_human)/день"
+      Write-Host "  Moving average (7 days): $($data.forecast.moving_average_7d_human)/day"
+      Write-Host "  Moving average (30 days): $($data.forecast.moving_average_30d_human)/day"
+      Write-Host "  Trend: $($data.forecast.daily_trend_human)/day"
       Write-Host ""
       
       # Прогнозируемый рост
       if ($data.forecast.predictions -and $data.forecast.predictions.Count -gt 0) {
-        Write-Host "--- Прогнозируемый размер ---" -ForegroundColor Yellow
+        Write-Host "--- Predicted Size ---" -ForegroundColor Yellow
         $step = [Math]::Max(1, [Math]::Floor($data.forecast.predictions.Count / 5))
         for ($i = 0; $i -lt $data.forecast.predictions.Count; $i += $step) {
           $pred = $data.forecast.predictions[$i]
-          Write-Host ("  День {0,3}: {1} (+ {2})" -f $pred.day, $pred.predicted_size_human, $pred.predicted_daily_growth_human)
+          Write-Host ("  Day {0,3}: {1} (+ {2})" -f $pred.day, $pred.predicted_size_human, $pred.predicted_daily_growth_human)
         }
         
         # Последний день
         $lastPred = $data.forecast.predictions[-1]
         Write-Host ""
-        Write-Host "  Итого через $($lastPred.day) дней: $($lastPred.predicted_size_human)" -ForegroundColor Cyan
+        Write-Host "  Total after $($lastPred.day) days: $($lastPred.predicted_size_human)" -ForegroundColor Cyan
       }
       Write-Host ""
     }
     
     # Временной ряд (последние 7 дней)
     if ($data.time_series -and $data.time_series.Count -gt 0) {
-      Write-Host "--- Последние 7 дней ---" -ForegroundColor Yellow
+      Write-Host "--- Last 7 Days ---" -ForegroundColor Yellow
       $recentDays = $data.time_series | Select-Object -Last 7
       foreach ($day in $recentDays) {
         $netGrowth = if ($day.net_growth_human) { $day.net_growth_human } else { "N/A" }
-        Write-Host ("  {0}: {1} коммитов, рост: {2}" -f $day.date, $day.commits_count, $netGrowth)
+        Write-Host ("  {0}: {1} commits, growth: {2}" -f $day.date, $day.commits_count, $netGrowth)
       }
     }
     
     Write-Host "================================================" -ForegroundColor Green
   }
   catch {
-    Write-Host "[ERROR] Не удалось обработать ответ: $_" -ForegroundColor Red
+    Write-Host "[ERROR] Ne udalos obrabotat otvet: $_" -ForegroundColor Red
     Write-Host $response
     exit 1
   }
 }
-

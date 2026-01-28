@@ -1,19 +1,19 @@
-# Логика работы с репозиториями: создание структуры, сохранение метаданных, импорт, работа с API
+# Repository operations: structure creation, metadata saving, import, API work
 
 # ============================================================================
-# Функции для работы с API
+# API Functions
 # ============================================================================
 
-# Получить базовый URL API
+# Get base API URL
 function Get-ApiBaseUrl {
-  # Приоритет: переменная окружения > конфиг файл > значение по умолчанию
+  # Priority: environment variable > config file > default value
   
-  # Проверяем переменную окружения
+  # Check environment variable
   if ($env:API_BASE_URL) {
     return $env:API_BASE_URL
   }
   
-  # Проверяем конфиг файл в домашней директории
+  # Check config file in home directory
   $configFile = Join-Path $env:USERPROFILE ".ergovcs\config"
   if (Test-Path $configFile) {
     $configContent = Get-Content $configFile -Raw
@@ -25,14 +25,14 @@ function Get-ApiBaseUrl {
     }
   }
   
-  # Используем переменные окружения для хоста и порта или значения по умолчанию
+  # Use environment variables for host and port or default values
   $apiHost = if ($env:API_HOST) { $env:API_HOST } else { "localhost" }
   $apiPort = if ($env:API_PORT) { $env:API_PORT } else { "8000" }
   
   return "http://${apiHost}:${apiPort}/api/version_management"
 }
 
-# Выполнить HTTP запрос к API
+# Execute HTTP request to API
 function Invoke-ApiRequest {
   param(
     [Parameter(Mandatory=$true)]
@@ -47,23 +47,23 @@ function Invoke-ApiRequest {
     [hashtable]$Headers = @{}
   )
   
-  # Получаем базовый URL
+  # Get base URL
   $baseUrl = Get-ApiBaseUrl
   $url = "$baseUrl$Endpoint"
   
-  # Подготовка заголовков
+  # Prepare headers
   $requestHeaders = @{
     "Content-Type" = "application/json"
     "Accept" = "application/json"
   }
   
-  # Добавляем кастомные заголовки
+  # Add custom headers
   foreach ($key in $Headers.Keys) {
     $requestHeaders[$key] = $Headers[$key]
   }
   
   try {
-    # Подготовка параметров для Invoke-RestMethod
+    # Prepare parameters for Invoke-RestMethod
     $params = @{
       Uri = $url
       Method = $Method
@@ -71,15 +71,15 @@ function Invoke-ApiRequest {
       ErrorAction = "Stop"
     }
     
-    # Добавляем тело запроса для POST/PUT/PATCH
+    # Add request body for POST/PUT/PATCH
     if ($Body -and ($Method -eq "POST" -or $Method -eq "PUT" -or $Method -eq "PATCH")) {
       $params["Body"] = $Body
     }
     
-    # Выполнение запроса
+    # Execute request
     $response = Invoke-RestMethod @params
     
-    # Возвращаем ответ (может быть объект или строка)
+    # Return response (can be object or string)
     if ($response -is [string]) {
       return $response
     } else {
@@ -87,11 +87,11 @@ function Invoke-ApiRequest {
     }
   }
   catch {
-    # Обработка ошибок
+    # Error handling
     $statusCode = $null
     $errorMessage = $_.Exception.Message
     
-    # Пытаемся извлечь детали ошибки из ответа
+    # Try to extract error details from response
     if ($_.Exception.Response) {
       try {
         $statusCode = $_.Exception.Response.StatusCode.value__
@@ -99,7 +99,7 @@ function Invoke-ApiRequest {
         $responseBody = $reader.ReadToEnd()
         $reader.Close()
         
-        # Пытаемся распарсить JSON с ошибкой
+        # Try to parse JSON error
         $errorObj = $responseBody | ConvertFrom-Json -ErrorAction SilentlyContinue
         if ($errorObj -and $errorObj.detail) {
           $errorMessage = $errorObj.detail
@@ -108,29 +108,29 @@ function Invoke-ApiRequest {
         }
       }
       catch {
-        # Если не удалось распарсить, используем стандартное сообщение
+        # If parsing failed, use standard message
       }
     }
     
-    Write-Host "[ERROR] API запрос не удался: $errorMessage" -ForegroundColor Red
+    Write-Host "[ERROR] API request failed: $errorMessage" -ForegroundColor Red
     Write-Host "  URL: $url" -ForegroundColor Yellow
-    Write-Host "  Метод: $Method" -ForegroundColor Yellow
+    Write-Host "  Method: $Method" -ForegroundColor Yellow
     if ($statusCode) {
-      Write-Host "  HTTP код: $statusCode" -ForegroundColor Yellow
+      Write-Host "  HTTP code: $statusCode" -ForegroundColor Yellow
     }
     
-    # Возвращаем код ошибки
+    # Return error code
     return $null
   }
 }
 
-# Создать репозиторий через API
+# Create repository via API
 function Invoke-ApiCreateRepository {
   param([string]$Name = $null)
   
-  # Параметры:
-  #   $Name - название репозитория (опционально)
-  # Возвращает: JSON с информацией о созданном репозитории (id, name, path, created_at)
+  # Parameters:
+  #   $Name - repository name (optional)
+  # Returns: JSON with created repository info (id, name, path, created_at)
   
   $body = @{}
   if ($Name) {
@@ -138,23 +138,23 @@ function Invoke-ApiCreateRepository {
   }
   $bodyJson = $body | ConvertTo-Json -Depth 2
   
-  # Стандартный create ViewSet в DRF доступен по POST /repositories/
+  # Standard create ViewSet in DRF available at POST /repositories/
   Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/" -Body $bodyJson
 }
 
-# Получить список репозиториев через API
+# Get repositories list via API
 function Invoke-ApiListRepositories {
-  # Возвращает: JSON со списком репозиториев
+  # Returns: JSON with repositories list
   Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/"
 }
 
-# Получить список веток репозитория
+# Get repository branches list
 function Invoke-ApiListBranches {
   param([string]$RepoUuid)
   Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/$RepoUuid/branches/"
 }
 
-# Создать ветку
+# Create branch
 function Invoke-ApiCreateBranch {
   param(
     [string]$RepoUuid,
@@ -176,7 +176,7 @@ function Invoke-ApiCreateBranch {
   Invoke-ApiRequest -Method "POST" -Endpoint "/branches/" -Body $body
 }
 
-# Установить ветку по умолчанию (по id)
+# Set default branch (by id)
 function Invoke-ApiSetDefaultBranchById {
   param(
     [int]$BranchId,
@@ -196,7 +196,7 @@ function Invoke-ApiSetDefaultBranchById {
   Invoke-ApiRequest -Method "POST" -Endpoint "/branches/set_default/" -Body $body
 }
 
-# Установить ветку по умолчанию (по repo+name)
+# Set default branch (by repo+name)
 function Invoke-ApiSetDefaultBranchByName {
   param(
     [string]$RepoUuid,
@@ -218,31 +218,31 @@ function Invoke-ApiSetDefaultBranchByName {
   Invoke-ApiRequest -Method "POST" -Endpoint "/branches/set_default/" -Body $body
 }
 
-# Удалить ветку
+# Delete branch
 function Invoke-ApiDeleteBranch {
   param([int]$BranchId)
   Invoke-ApiRequest -Method "DELETE" -Endpoint "/branches/$BranchId/"
 }
 
-# Получить дерево файлов репозитория
+# Get repository file tree
 function Invoke-ApiGetRepoFiles {
   param([string]$RepoUuid)
   Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/$RepoUuid/files/"
 }
 
 
-# Клонировать репозиторий через API
+# Clone repository via API
 function Invoke-ApiCloneRepository {
   param([string]$Uuid)
   
-  # TODO: Реализовать клонирование через API
-  # Возвращает: путь к клонированному репозиторию
+  # TODO: Implement cloning via API
+  # Returns: path to cloned repository
   
-  Write-Host "[TODO] Вызвать API /api/repositories/$Uuid/clone/" -ForegroundColor Yellow
+  Write-Host "[TODO] Call API /api/repositories/$Uuid/clone/" -ForegroundColor Yellow
   Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/$Uuid/clone/"
 }
 
-# Создать коммит через API
+# Create commit via API
 function Invoke-ApiCreateCommit {
   param(
     [string]$Uuid,
@@ -250,24 +250,26 @@ function Invoke-ApiCreateCommit {
     $Files = $null,
     [string]$Branch = $null
   )
-  
+
   $filesArray = @()
   if ($Files) {
     try {
       if ($Files -is [string]) {
         $filesArray = @($Files | ConvertFrom-Json)
-      } elseif ($Files -is [array]) {
+      }
+      elseif ($Files -is [array]) {
         $filesArray = $Files
-      } else {
+      }
+      else {
         $filesArray = @($Files)
       }
     }
     catch {
-      Write-Host "[ERROR] Не удалось преобразовать файлы: $_" -ForegroundColor Red
+      Write-Host "[ERROR] Failed to convert files: $_" -ForegroundColor Red
       return $null
     }
   }
-  
+
   $bodyObj = @{
     message = $Message
     files = $filesArray
@@ -275,14 +277,14 @@ function Invoke-ApiCreateCommit {
   if ($Branch) {
     $bodyObj["branch_name"] = $Branch
   }
-  
+
   $body = $bodyObj | ConvertTo-Json -Depth 10
-  
+
   $response = Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/$Uuid/commits/create/" -Body $body
   return $response
 }
 
-# Отправить изменения через API
+# Push changes via API
 function Invoke-ApiPushChanges {
   param(
     [string]$Uuid,
@@ -290,75 +292,75 @@ function Invoke-ApiPushChanges {
     [string]$CommitData = $null
   )
   
-  # Подготавливаем тело запроса
+  # Prepare request body
   $body = @{
     branch = $Branch
   }
   
-  # Если переданы данные коммита, добавляем их
+  # If commit data provided, add it
   if ($CommitData) {
     $body["commit"] = $CommitData
   }
   
   $bodyJson = $body | ConvertTo-Json -Depth 10
   
-  # Вызываем API эндпоинт
+  # Call API endpoint
   return Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/$Uuid/push/" -Body $bodyJson
 }
 
-# Обновить локальный репозиторий через API
+# Update local repository via API
 function Invoke-ApiUpdateRepository {
   param(
     [string]$Uuid,
     [string]$Branch
   )
   
-  # Подготавливаем тело запроса
+  # Prepare request body
   $body = @{
     branch = $Branch
   }
   
   $bodyJson = $body | ConvertTo-Json -Depth 2
   
-  # Вызываем API эндпоинт
+  # Call API endpoint
   return Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/$Uuid/update/" -Body $bodyJson
 }
 
-# Получить информацию о коммите через API
+# Get commit info via API
 function Get-ApiCommit {
   param(
     [string]$Uuid,
     [string]$CommitHash
   )
   
-  # TODO: Реализовать получение информации о коммите через API
-  # Возвращает: JSON с метаданными коммита
+  # TODO: Implement getting commit info via API
+  # Returns: JSON with commit metadata
   
-  Write-Host "[TODO] Вызвать API /api/repositories/$Uuid/commits/$CommitHash/" -ForegroundColor Yellow
+  Write-Host "[TODO] Call API /api/repositories/$Uuid/commits/$CommitHash/" -ForegroundColor Yellow
   Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/$Uuid/commits/$CommitHash/"
 }
 
-# Получить diff коммита через API
+# Get commit diff via API
 function Get-ApiCommitDiff {
   param(
     [string]$Uuid,
     [string]$CommitHash
   )
   
-  # TODO: Реализовать получение diff коммита через API
-  # Возвращает: diff в формате unified diff
+  # TODO: Implement getting commit diff via API
+  # Returns: diff in unified diff format
   
-  Write-Host "[TODO] Вызвать API /api/repositories/$Uuid/commits/$CommitHash/diff/" -ForegroundColor Yellow
+  Write-Host "[TODO] Call API /api/repositories/$Uuid/commits/$CommitHash/diff/" -ForegroundColor Yellow
   Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/$Uuid/commits/$CommitHash/diff/"
 }
 
-# Получить статистику репозитория через API
+# Get repository statistics via API
 function Invoke-ApiGetStats {
   param([string]$RepoUuid)
   Invoke-ApiRequest -Method "GET" -Endpoint "/repositories/$RepoUuid/stats/"
 }
 
-# Получить прогноз роста репозитория через API
+# Get repository growth forecast via API
 function Invoke-ApiGetForecast {
   param(
     [string]$RepoUuid,
@@ -368,7 +370,7 @@ function Invoke-ApiGetForecast {
 }
 
 # ============================================================================
-# Локальные функции работы с репозиториями
+# Local repository functions
 # ============================================================================
 
 function Ensure-RepoDirs {
@@ -408,30 +410,30 @@ function Import-FromSource {
   }
   elseif ($Source.ToLower().EndsWith(".zip")) {
     if (-not (Get-Command Expand-Archive -ErrorAction SilentlyContinue)) {
-      Write-Host "[ERROR] Expand-Archive недоступен. Используйте PowerShell 5.1 или выше." -ForegroundColor Red
+      Write-Host "[ERROR] Expand-Archive not available. Use PowerShell 5.1 or higher." -ForegroundColor Red
       exit 1
     }
     Expand-Archive -Path $Source -DestinationPath $Target -Force
   }
   else {
-    Write-Host "[ERROR] Неизвестный источник: $Source" -ForegroundColor Red
-    Write-Host "[INFO] Поддерживаются: папка или zip-архив" -ForegroundColor Yellow
+    Write-Host "[ERROR] Unknown source: $Source" -ForegroundColor Red
+    Write-Host "[INFO] Supported: folder or zip-archive" -ForegroundColor Yellow
     exit 1
   }
 }
 
 # ============================================================================
-# Функции для работы с содержимым проекта и коммитами
+# Functions for working with project content and commits
 # ============================================================================
 
-# Получить содержимое проекта (из API или backup.json)
+# Get project content (from API or backup.json)
 function Get-ProjectContent {
   param(
     [string]$RepoUuid,
     [string]$LocalPath
   )
   
-  # 1. Пробуем получить через API
+  # 1. Try to get via API
   try {
     $apiResponse = Invoke-ApiGetRepoFiles -RepoUuid $RepoUuid
     if ($apiResponse) {
@@ -443,10 +445,10 @@ function Get-ProjectContent {
     }
   }
   catch {
-    Write-Host "[DEBUG] Не удалось получить содержимое проекта через API: $_" -ForegroundColor Gray
+    Write-Host "[DEBUG] Failed to get project content via API: $_" -ForegroundColor Gray
   }
   
-  # 2. Пробуем получить из backup.json
+  # 2. Try to get from backup.json
   $backupFile = Join-Path $LocalPath ".ergovcs" "backup.json"
   if (Test-Path $backupFile) {
     try {
@@ -459,39 +461,39 @@ function Get-ProjectContent {
       }
     }
     catch {
-      Write-Host "[DEBUG] Не удалось прочитать backup.json: $_" -ForegroundColor Gray
+      Write-Host "[DEBUG] Failed to read backup.json: $_" -ForegroundColor Gray
     }
   }
   
-  # 3. Создаем пустую структуру
-  Write-Host "[INFO] Не удалось получить предыдущее состояние проекта. Будет создано пустое состояние." -ForegroundColor Yellow
+  # 3. Create empty structure
+  Write-Host "[INFO] Failed to get previous project state. Empty state will be created." -ForegroundColor Yellow
   return @{
     source = "empty"
     structure = @()
   }
 }
 
-# Определить тип коммита на основе изменений и сообщения
+# Determine commit type based on changes and message
 function Get-CommitType {
   param(
     [array]$Files,
     [string]$Message
   )
   
-  # Проверяем, указан ли тип в сообщении (формат Conventional Commits)
+  # Check if type is specified in message (Conventional Commits format)
   $commitTypes = @("feat", "fix", "docs", "style", "refactor", "test", "chore", "perf", "ci", "build", "revert")
   
-  # Проверяем, начинается ли сообщение с типа коммита
+  # Check if message starts with commit type
   if ($Message -match '^(\w+)(?:\([^)]+\))?:') {
     $type = $Matches[1]
     if ($commitTypes -contains $type) {
-      Write-Host "[INFO] Обнаружен тип коммита в сообщении: $type" -ForegroundColor Gray
+      Write-Host "[INFO] Commit type detected in message: $type" -ForegroundColor Gray
       return $type
     }
   }
   
-  # Автоматическое определение типа на основе изменений
-  Write-Host "[INFO] Автоматическое определение типа коммита..." -ForegroundColor Gray
+  # Automatic type detection based on changes
+  Write-Host "[INFO] Automatic commit type detection..." -ForegroundColor Gray
   
   $hasBuildFiles = $false
   $hasSourceFiles = $false
@@ -502,7 +504,7 @@ function Get-CommitType {
   $hasFixFiles = $false
   $hasFeatureFiles = $false
   
-  # Анализируем ключевые слова в сообщении
+  # Analyze keywords in message
   $messageLower = $Message.ToLower()
   if ($messageLower -match "fix|bug|error|issue") {
     $hasFixFiles = $true
@@ -520,16 +522,16 @@ function Get-CommitType {
     $hasDocsFiles = $true
   }
   
-  # Анализируем файлы
+  # Analyze files
   foreach ($file in $Files) {
     $path = $file.path.ToLower()
     
-    # Проверяем файлы сборки
+    # Check build files
     if ($path -match '(package\.json|pom\.xml|build\.gradle|build\.xml|cmakelists\.txt|makefile|dockerfile|\.yml$|\.yaml$|\.json$|\.config$|\.ini$)') {
       $hasBuildFiles = $true
     }
     
-    # Проверяем исходные файлы
+    # Check source files
     if ($path -match '(\.py$|\.js$|\.ts$|\.java$|\.cpp$|\.cs$|\.php$|\.rb$|\.go$|\.rs$|\.swift$|\.kt$|\.scala$)') {
       if ($file.action -eq "created") {
         $hasFeatureFiles = $true
@@ -539,23 +541,23 @@ function Get-CommitType {
       }
     }
     
-    # Проверяем документацию
+    # Check documentation
     if ($path -match '(readme\.md|readme\.txt|\.md$|\.rst$|docs?\/|\.txt$)') {
       $hasDocsFiles = $true
     }
     
-    # Проверяем стили
+    # Check styles
     if ($path -match '(\.css$|\.scss$|\.less$|\.sass$|\.styl$|\.html$|\.vue$|\.jsx$|\.tsx$)') {
       $hasStyleFiles = $true
     }
     
-    # Проверяем тесты
+    # Check tests
     if ($path -match '(test|spec|__tests__|__spec__|\.test\.|\.spec\.)') {
       $hasTestFiles = $true
     }
   }
   
-  # Определяем тип по приоритету
+  # Determine type by priority
   if ($hasFixFiles) {
     return "fix"
   }
@@ -583,10 +585,10 @@ function Get-CommitType {
 }
 
 # ============================================================================
-# Функции для работы с backup.json
+# Functions for working with backup.json
 # ============================================================================
 
-# Сохранить backup.json с текущим состоянием репозитория
+# Save backup.json with current repository state
 function Save-BackupJson {
   param(
     [string]$LocalPath,
@@ -599,7 +601,7 @@ function Save-BackupJson {
     New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
   }
   
-  # Получаем структуру файлов репозитория
+  # Get repository file structure
   $structure = Get-RepositoryStructure -LocalPath $LocalPath
   $currentBranch = Get-CurrentBranch -LocalPath $LocalPath
   
@@ -611,16 +613,16 @@ function Save-BackupJson {
   }
   
   $backupData | ConvertTo-Json -Depth 20 | Set-Content -Path $backupFile -Encoding UTF8
-  Write-Host "[INFO] Backup сохранен: $backupFile" -ForegroundColor Gray
+  Write-Host "[INFO] Backup saved: $backupFile" -ForegroundColor Gray
 }
 
-# Получить структуру репозитория для backup.json
+# Get repository structure for backup.json
 function Get-RepositoryStructure {
   param([string]$LocalPath)
   
   $structure = @()
   
-  # Получаем все файлы и директории (исключая .ergovcs)
+  # Get all files and directories (excluding .ergovcs)
   Get-ChildItem -Path $LocalPath -Recurse -Force | ForEach-Object {
     if ($_.FullName -notlike "*\.ergovcs*") {
       $relativePath = [System.IO.Path]::GetRelativePath($LocalPath, $_.FullName).Replace('\', '/')
@@ -633,7 +635,7 @@ function Get-RepositoryStructure {
       }
       
       if (-not $_.PSIsContainer) {
-        # Для файлов добавляем хеш содержимого
+        # For files add content hash
         $item.hash = Get-FileContentHash -FilePath $_.FullName
         $item.size = $_.Length
       }
@@ -645,11 +647,11 @@ function Get-RepositoryStructure {
   return $structure
 }
 
-# Получить текущую ветку из конфига
+# Get current branch from config
 function Get-CurrentBranch {
   param([string]$LocalPath)
   
-  # Пробуем получить из локального конфига
+  # Try to get from local config
   $localReposFile = Join-Path $LocalPath ".ergovcs" "repos.json"
   if (Test-Path $localReposFile) {
     try {
@@ -665,7 +667,7 @@ function Get-CurrentBranch {
     catch {}
   }
   
-  # Фолбэк: глобальный конфиг
+  # Fallback: global config
   $globalReposFile = Join-Path $env:USERPROFILE ".ergovcs" "repos.json"
   if (Test-Path $globalReposFile) {
     try {
@@ -684,7 +686,7 @@ function Get-CurrentBranch {
   return "main"
 }
 
-# Обновить конфиг репозитория
+# Update repository config
 function Update-RepositoryConfig {
   param(
     [string]$Uuid,
@@ -720,4 +722,3 @@ function Update-RepositoryConfig {
   
   $configData | ConvertTo-Json -Depth 10 | Set-Content $configFile -Encoding UTF8
 }
-

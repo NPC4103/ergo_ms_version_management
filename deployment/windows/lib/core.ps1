@@ -1,5 +1,5 @@
-﻿# core.ps1
-# Общие утилиты: поиск корня проекта, генерация UUID, хэширование, проверка игнорирования
+# core.ps1
+# Common utilities: project root search, UUID generation, hashing, ignore checking
 
 $script:ProjectRoot = $null
 $script:MediaDir = $null
@@ -21,7 +21,7 @@ function Detect-ProjectRoot {
     $current = $current.Parent
   }
 
-  Write-Host "[ERROR] Не удалось найти корень проекта (modules\version_management)!" -ForegroundColor Red
+  Write-Host "[ERROR] Failed to find project root (modules\version_management)!" -ForegroundColor Red
   exit 1
 }
 
@@ -38,7 +38,7 @@ function Get-CliPath {
 }
 
 # ============================================================================
-# Функции для работы с путями и поиска репозиториев
+# Functions for working with paths and repository search
 # ============================================================================
 
 function Find-LocalRepositoryRoot {
@@ -60,71 +60,71 @@ function Get-CurrentRepositoryUuid {
   param([string]$LocalPath)
 
   if (-not $LocalPath) {
-    Write-Host "[DEBUG] Корень репозитория не найден" -ForegroundColor Gray
+    Write-Host "[DEBUG] Repository root not found" -ForegroundColor Gray
     return $null
   }
   
-  Write-Host "[DEBUG] Корень репозитория: $LocalPath" -ForegroundColor Gray
+  Write-Host "[DEBUG] Repository root: $LocalPath" -ForegroundColor Gray
   
-  # Путь к локальному файлу repos.json в .ergovcs директории
+  # Path to local repos.json file in .ergovcs directory
   $localReposFile = Join-Path $LocalPath ".ergovcs" "repos.json"
-  Write-Host "[DEBUG] Ищем локальный файл: $localReposFile" -ForegroundColor Gray
+  Write-Host "[DEBUG] Looking for local file: $localReposFile" -ForegroundColor Gray
   
-  # Пробуем сначала прочитать из локального .ergovcs/repos.json
+  # Try to read from local .ergovcs/repos.json first
   if (Test-Path $localReposFile) {
-    Write-Host "[DEBUG] Локальный файл repos.json найден" -ForegroundColor Gray
+    Write-Host "[DEBUG] Local repos.json file found" -ForegroundColor Gray
     try {
       $reposJson = Get-Content $localReposFile -Raw -Encoding UTF8
       $repos = $reposJson | ConvertFrom-Json -ErrorAction Stop
       
-      Write-Host "[DEBUG] Прочитано репозиториев: $($repos.repositories.PSObject.Properties.Count)" -ForegroundColor Gray
+      Write-Host "[DEBUG] Repositories read: $($repos.repositories.PSObject.Properties.Count)" -ForegroundColor Gray
       
-      # Ищем репозиторий с local_path, который совпадает с текущим путем
+      # Look for repository with local_path matching current path
       foreach ($property in $repos.repositories.PSObject.Properties) {
         $uuid = $property.Name
         $repo = $property.Value
         
-        Write-Host "[DEBUG] Проверяем репозиторий: $uuid" -ForegroundColor Gray
+        Write-Host "[DEBUG] Checking repository: $uuid" -ForegroundColor Gray
         Write-Host "[DEBUG]  local_path: $($repo.local_path)" -ForegroundColor Gray
         Write-Host "[DEBUG]  current: $LocalPath" -ForegroundColor Gray
         
-        # Сравниваем пути (учитываем возможные различия в формате)
+        # Compare paths (account for possible format differences)
         if ($repo.local_path -and (
             $repo.local_path -eq $LocalPath -or 
             (Resolve-Path $repo.local_path -ErrorAction SilentlyContinue) -eq (Resolve-Path $LocalPath -ErrorAction SilentlyContinue))) {
-          Write-Host "[DEBUG] Найден UUID: $uuid" -ForegroundColor Gray
+          Write-Host "[DEBUG] Found UUID: $uuid" -ForegroundColor Gray
           return $uuid
         }
       }
     }
     catch {
-      Write-Host "[ERROR] Не удалось прочитать или распарсить локальный repos.json: $_" -ForegroundColor Red
+      Write-Host "[ERROR] Failed to read or parse local repos.json: $_" -ForegroundColor Red
     }
   } else {
-    Write-Host "[DEBUG] Локальный файл repos.json не найден" -ForegroundColor Gray
+    Write-Host "[DEBUG] Local repos.json file not found" -ForegroundColor Gray
   }
   
-  # Фолбэк: проверяем staging.json (если существует)
+  # Fallback: check staging.json (if exists)
   $stagingFile = Join-Path $LocalPath ".ergovcs\staging.json"
   if (Test-Path $stagingFile) {
-    Write-Host "[DEBUG] Пробуем прочитать staging.json" -ForegroundColor Gray
+    Write-Host "[DEBUG] Trying to read staging.json" -ForegroundColor Gray
     try {
       $stagingJson = Get-Content $stagingFile -Raw -Encoding UTF8
       $staging = $stagingJson | ConvertFrom-Json -ErrorAction Stop
       if ($staging.repository_uuid) {
-        Write-Host "[DEBUG] Найден UUID из staging: $($staging.repository_uuid)" -ForegroundColor Gray
+        Write-Host "[DEBUG] Found UUID from staging: $($staging.repository_uuid)" -ForegroundColor Gray
         return $staging.repository_uuid
       }
     }
     catch {
-      Write-Host "[ERROR] Не удалось прочитать staging area: $_" -ForegroundColor Red
+      Write-Host "[ERROR] Failed to read staging area: $_" -ForegroundColor Red
     }
   }
   
-  # Фолбэк: проверяем глобальный файл (для обратной совместимости)
+  # Fallback: check global file (for backward compatibility)
   $globalReposFile = Join-Path $env:USERPROFILE ".ergovcs\repos.json"
   if (Test-Path $globalReposFile) {
-    Write-Host "[DEBUG] Пробуем глобальный файл: $globalReposFile" -ForegroundColor Gray
+    Write-Host "[DEBUG] Trying global file: $globalReposFile" -ForegroundColor Gray
     try {
       $reposJson = Get-Content $globalReposFile -Raw -Encoding UTF8
       $repos = $reposJson | ConvertFrom-Json -ErrorAction Stop
@@ -136,22 +136,22 @@ function Get-CurrentRepositoryUuid {
         if ($repo.local_path -and (
             $repo.local_path -eq $LocalPath -or 
             (Resolve-Path $repo.local_path -ErrorAction SilentlyContinue) -eq (Resolve-Path $LocalPath -ErrorAction SilentlyContinue))) {
-          Write-Host "[DEBUG] Найден UUID в глобальном файле: $uuid" -ForegroundColor Gray
+          Write-Host "[DEBUG] Found UUID in global file: $uuid" -ForegroundColor Gray
           return $uuid
         }
       }
     }
     catch {
-      Write-Host "[ERROR] Не удалось прочитать глобальный repos.json: $_" -ForegroundColor Red
+      Write-Host "[ERROR] Failed to read global repos.json: $_" -ForegroundColor Red
     }
   }
   
-  Write-Host "[DEBUG] UUID репозитория не найден" -ForegroundColor Gray
+  Write-Host "[DEBUG] Repository UUID not found" -ForegroundColor Gray
   return $null
 }
 
 # ============================================================================
-# Функции для работы с хэшированием и содержимым файлов
+# Functions for hashing and file content
 # ============================================================================
 
 function Get-FileContentHash {
@@ -181,18 +181,18 @@ function Get-FileChangeType {
   
   $relativePath = [System.IO.Path]::GetRelativePath($LocalPath, $FilePath).Replace('\', '/')
   
-  # Проверяем, существует ли файл/директория
+  # Check if file/directory exists
   $exists = Test-Path $FilePath
   
-  # Ищем в предыдущем состоянии
+  # Look in previous state
   $previousEntry = $null
   if ($PreviousState.structure) {
-    # Ищем по текущему пути
+    # Search by current path
     $previousEntry = $PreviousState.structure | Where-Object { 
       $_.path -eq $relativePath 
     } | Select-Object -First 1
     
-    # Если не нашли, ищем по старому пути (для переименований)
+    # If not found, search by old path (for renames)
     if (-not $previousEntry) {
       $previousEntry = $PreviousState.structure | Where-Object { 
         $_.old_path -eq $relativePath 
@@ -202,17 +202,17 @@ function Get-FileChangeType {
   
   if ($exists) {
     if (-not $previousEntry) {
-      # Новый файл/директория
+      # New file/directory
       return "created"
     }
     else {
       if ($previousEntry.is_directory -eq $IsDirectory) {
-        # Проверяем переименование
+        # Check for rename
         if ($previousEntry.path -ne $relativePath) {
           return "renamed"
         }
         
-        # Для файлов проверяем хеш содержимого
+        # For files check content hash
         if (-not $IsDirectory) {
           $currentHash = Get-FileContentHash -FilePath $FilePath
           if ($currentHash -and $previousEntry.hash -and $currentHash -ne $previousEntry.hash) {
@@ -220,27 +220,27 @@ function Get-FileChangeType {
           }
         }
         
-        # Нет изменений
+        # No changes
         return "unchanged"
       }
       else {
-        # Изменился тип (был файл, стал директорией или наоборот)
+        # Type changed (was file, became directory or vice versa)
         return "updated"
       }
     }
   }
   else {
     if ($previousEntry) {
-      # Файл/директория удален
+      # File/directory deleted
       return "deleted"
     }
-    # Ничего не было и ничего нет
+    # Nothing was and nothing is
     return "unchanged"
   }
 }
 
 # ============================================================================
-# Функции для работы с игнорированием файлов
+# Functions for file ignoring
 # ============================================================================
 
 function Test-Ignored {
@@ -249,12 +249,12 @@ function Test-Ignored {
     [array]$IgnorePatterns
   )
   
-  # Всегда игнорируем .ergovcs
+  # Always ignore .ergovcs
   if ($FilePath -like '.ergovcs/*' -or $FilePath -eq '.ergovcs') {
     return $true
   }
   
-  # Нормализуем путь (заменяем обратные слеши на прямые)
+  # Normalize path (replace backslashes with forward slashes)
   $normalizedPath = $FilePath.Replace('\', '/')
   
   foreach ($pattern in $IgnorePatterns) {
@@ -263,24 +263,24 @@ function Test-Ignored {
       continue
     }
     
-    # Убираем начальные и конечные пробелы
+    # Remove leading and trailing spaces
     $normalizedPattern = $normalizedPattern.Trim()
     
-    # Пропускаем комментарии
+    # Skip comments
     if ($normalizedPattern.StartsWith("#")) {
       continue
     }
     
-    # Если паттерн заканчивается на /, то это директория
+    # If pattern ends with /, it's a directory
     $isDirectoryPattern = $normalizedPattern.EndsWith('/')
     if ($isDirectoryPattern) {
       $normalizedPattern = $normalizedPattern.TrimEnd('/')
     }
     
-    # Специальная обработка паттерна ".*" (файлы/директории, начинающиеся с точки)
+    # Special handling for ".*" pattern (files/directories starting with dot)
     if ($normalizedPattern -eq '.*') {
-      # Паттерн ".*" означает: имя файла/директории начинается с точки
-      # Проверяем, начинается ли имя файла/директории с точки
+      # Pattern ".*" means: file/directory name starts with dot
+      # Check if file/directory name starts with dot
       $fileName = Split-Path -Leaf $normalizedPath
       if ($fileName.StartsWith('.')) {
         return $true
@@ -288,9 +288,9 @@ function Test-Ignored {
       continue
     }
     
-    # Специальная обработка паттерна "*/.*" (файлы/директории, начинающиеся с точки в любой поддиректории)
+    # Special handling for "*/.* " pattern (files/directories starting with dot in any subdirectory)
     if ($normalizedPattern -eq '*/.*') {
-      # Проверяем, есть ли в пути любой сегмент, начинающийся с точки
+      # Check if path has any segment starting with dot
       $pathSegments = $normalizedPath -split '/'
       foreach ($segment in $pathSegments) {
         if ($segment.StartsWith('.')) {
@@ -300,42 +300,42 @@ function Test-Ignored {
       continue
     }
     
-    # Преобразуем glob-паттерны в regex
+    # Convert glob patterns to regex
     $regexPattern = [regex]::Escape($normalizedPattern)
     $regexPattern = $regexPattern.Replace('\*', '.*').Replace('\?', '.')
     
-    # Если паттерн начинается с /, он должен соответствовать началу пути
+    # If pattern starts with /, it must match from the beginning of path
     if ($normalizedPattern.StartsWith('/')) {
       $regexPattern = '^' + $regexPattern.Substring(1)
     }
-    # Иначе паттерн может соответствовать любой части пути
+    # Otherwise pattern can match any part of path
     else {
-      # Если паттерн содержит /, он должен соответствовать с начала сегмента
+      # If pattern contains /, it must match from segment start
       if ($normalizedPattern.Contains('/')) {
         $regexPattern = '(^|/)' + $regexPattern
       }
-      # Иначе паттерн может быть в любом месте имени файла/директории
+      # Otherwise pattern can be anywhere in file/directory name
       else {
         $regexPattern = $regexPattern
       }
     }
     
-    # Добавляем завершение для полного совпадения (если не заканчивается на *)
+    # Add ending for full match (if not ending with *)
     if (-not $regexPattern.EndsWith('.*')) {
       $regexPattern = $regexPattern + '$'
     }
     
-    # Если это паттерн директории, добавляем завершающий слеш
+    # If it's a directory pattern, add trailing slash
     if ($isDirectoryPattern) {
       $regexPattern = $regexPattern.TrimEnd('$') + '(/|$)'
     }
     
-    # Проверяем соответствие
+    # Check match
     if ($normalizedPath -match $regexPattern) {
       return $true
     }
     
-    # Дополнительная проверка для директорий: если путь начинается с паттерна
+    # Additional check for directories: if path starts with pattern
     if ($normalizedPath.StartsWith($normalizedPattern + '/')) {
       return $true
     }
@@ -343,4 +343,3 @@ function Test-Ignored {
   
   return $false
 }
-
