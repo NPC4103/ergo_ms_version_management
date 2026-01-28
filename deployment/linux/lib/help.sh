@@ -1,96 +1,109 @@
 #!/usr/bin/env bash
-# Справка по использованию утилиты
+# Help for CLI utility
 
 print_help() {
   cat <<'EOF'
 ergovcs <command> [options]
 
-Основные команды работы с репозиториями:
-  clone <UUID>
-    Клонировать репозиторий из media/version_management/<UUID>/ на локальный компьютер
-    Вызывает API: /api/repositories/{id}/clone/
+Main repository commands:
+  create [name]
+    Create new repository on server via API
+    Interactive mode: prompts for name, username, password, description, branch, private flag
+    Options:
+      --username, -u    Username for authentication
+      --password, -pw   Password for authentication
+      --description, -d Repository description
+      --branch, -b      Initial branch name (default: main)
+      --private, -p     Create private repository
+    Examples:
+      ergovcs create
+      ergovcs create "My Project"
+      ergovcs create --name "My Project" -u admin -pw secret
     
-  add <файл.расширение>
-    Добавить файл для коммита в staging area
-    После команды commit изменения будут отправлены на сервер
+  clone <uuid|name> [target_path]
+    Clone repository from server to local computer
+    Copies files from media/version_management/<uuid>/ to target path
+    Creates .ergovcs/ folder and .ergovcsignore file
+    Examples:
+      ergovcs clone abc-123-def-456 ./my-project
+      ergovcs clone "My Repository" /home/user/projects/myrepo
+      ergovcs clone abc-123
     
-  commit -m "Сообщение"
-    Создать коммит с изменениями
-    Вызывает API: /api/repositories/{id}/commits/create/
-    После повторного add не создаётся новый коммит, а добавляются изменения
-    в существующий, до тех пор пока коммит не отправлен на сервер
+  add <file.extension>
+    Add file for commit to staging area
+    After commit command changes will be sent to server
     
-  push <ветка>
-    Отправить изменения на сервер в папку media/version_management/<UUID>/
-    Вызывает API: /api/repositories/{id}/push/
+  commit -m "Message"
+    Create commit with changes
+    After repeated add no new commit is created, changes are added
+    to existing one, until commit is pushed to server
     
-  update <ветка>
-    Обновить локальный репозиторий, подтянув изменения с сервера
-    Вызывает API: /api/repositories/{id}/update/
-    Примечание: не важно какая ветка скачана у пользователя
+  push <branch>
+    Push changes to server to folder media/version_management/<UUID>/
     
-  remove <UUID>
-    Удалить локальную копию репозитория с компьютера пользователя
-    Примечание: удаляет только локальную копию, не репозиторий на сервере
+  update <branch>
+    Update local repository, pulling changes from server
+    Note: doesn't matter which branch user has downloaded
+    
+  remove <path> [--force]
+    Remove cloned repository from local computer by path
+    --force (-f): skip confirmation prompt
+    Note: removes only local copy, not repository on server
+    Examples:
+      ergovcs remove /home/user/projects/myrepo
+      ergovcs remove ./my-project
+      ergovcs remove ./my-project --force
 
-Вспомогательные команды:
-  create [--name <имя>] [--description <текст>] [--private] [--read-only] [--branch <ветка>] [--username <u>] [--password <p>] [--root <путь>]
-    Создать новый репозиторий через API и подготовить локальные файлы
-
-  branch <list|create|delete|set-default> [опции]
-    Управление ветками (через API)
-    Примеры:
+Helper commands:
+  branch <list|create|delete|set-default> [options]
+    Branch management (via API)
+    Examples:
       ergovcs branch list --repo <uuid>
-      ergovcs branch create --repo <uuid> --name <ветка> --username <u> --password <p>
+      ergovcs branch create --repo <uuid> --name <branch>
       ergovcs branch delete --id <branch_id>
-      ergovcs branch set-default --repo <uuid> --name <ветка>
+      ergovcs branch set-default --repo <uuid> --name <branch>
 
   files --repo <uuid>
-    Показать дерево файлов репозитория
+    Show repository file tree
     
-  download --source <zip|dir> [--uuid <uuid>] [--name <имя>]
-    Скачать/импортировать репозиторий из zip-архива или папки
+  download --source <zip|dir> [--uuid <uuid>] [--name <name>]
+    Download/import repository from zip-archive or folder
 
-Аналитика и прогнозирование:
+Analytics and forecasting:
   stats [--repo <uuid>] [--json]
-    Получить статистику репозитория (размер, типы файлов, кандидаты для холодного хранилища)
-    Примеры:
+    Get repository statistics (size, file types, cold storage candidates)
+    Examples:
       ergovcs stats --repo <uuid>
       ergovcs stats --json
 
-  forecast [--repo <uuid>] [--days <число>] [--json]
-    Получить прогноз роста репозитория на основе временных рядов
-    Примеры:
+  forecast [--repo <uuid>] [--days <number>] [--json]
+    Get repository growth forecast based on time series
+    Examples:
       ergovcs forecast --repo <uuid>
       ergovcs forecast --days 90
       ergovcs forecast --json
 
   install-cli
-    Установить CLI-обертку /usr/local/bin/ergovcs
+    Install CLI wrapper to /usr/local/bin/ergovcs
 
   uninstall-cli
-    Удалить CLI-обертку /usr/local/bin/ergovcs
+    Remove CLI wrapper from /usr/local/bin/ergovcs
     
   help
-    Показать эту справку
+    Show this help
 
-Флаги:
-  --root <путь>   указать корень проекта вручную (по умолчанию определяется автоматически)
-
-Примеры:
-  ergovcs clone abc-123-def-456
+Examples:
+  ergovcs create "My Project"
+  ergovcs clone abc-123-def-456 ./my-project
   ergovcs add src/main.py
-  ergovcs commit -m "Добавлен новый функционал"
+  ergovcs commit -m "Added new feature"
   ergovcs push main
   ergovcs update main
-  ergovcs remove abc-123-def-456
-  ergovcs create --name "Мой репозиторий"
+  ergovcs remove ./my-project
   ergovcs download --source /path/to/repo.zip
   ergovcs files --repo <uuid>
   ergovcs stats --repo <uuid>
   ergovcs forecast --repo <uuid> --days 30
-  sudo ./version_manager.sh install-cli
-  sudo ./version_manager.sh uninstall-cli
 EOF
 }
 

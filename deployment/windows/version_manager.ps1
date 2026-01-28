@@ -45,12 +45,12 @@ $LibDir    = Join-Path $ScriptDir "lib"
 . (Join-Path $LibDir "cli.ps1")
 
 switch ($Command.ToLower()) {
-  "clone"    { Invoke-Clone -Args $Args }
+  "clone"    { Invoke-Clone -CloneArgs $Args }
   "add"      { Invoke-Add -Files $Args }
   "commit"   { Invoke-Commit -MessageArg $Args }
   "push"     { Invoke-Push -BranchArg $Args }
   "update"   { Invoke-Update -BranchArg $Args }
-  "remove"   { Invoke-Remove -Args $Args }
+  "remove"   { Invoke-Remove -RemoveArgs $Args }
   "create"   { Invoke-Create -RepoArg $Args }
   "download" { Invoke-Download -Args $Args }
   "branch"   { Invoke-Branch -Args $Args }

@@ -1,48 +1,51 @@
 #!/usr/bin/env bash
-# Обработчики команд: clone, add, commit, push, update, remove, create, download
+# Command handlers: clone, add, commit, push, update, remove, create, download
 
 # ============================================================================
-# Клонирование репозитория
-# Команда: ergovcs clone <путь> <имя_или_uuid>
+# Clone repository
+# Command: ergovcs clone <uuid|name> [target_path]
 # ============================================================================
 cmd_clone() {
-    local target_path="$1"
-    local repo_identifier="$2"
+    local repo_identifier="$1"
+    local target_path="$2"
     
-    # --- 1. Обработка аргументов ---
-    if [[ -z "$target_path" ]]; then
-        echo "[ERROR] Использование: ergovcs clone <путь_назначения> <имя_репозитория_или_uuid>"
+    # Interactive input if not provided
+    if [[ -z "$repo_identifier" ]]; then
+        read -p "Repository UUID or name: " repo_identifier
+    fi
+    if [[ -z "$repo_identifier" ]]; then
+        echo "[ERROR] Need to specify repository UUID or name"
+        echo "Usage: ergovcs clone <uuid|name> [target_path]"
         return 1
     fi
 
-    if [[ -z "$repo_identifier" ]]; then
-        repo_identifier="$target_path"
-        target_path="."
+    if [[ -z "$target_path" ]]; then
+        read -p "Target path (default: current directory): " target_path
+        if [[ -z "$target_path" ]]; then
+            target_path="."
+        fi
     fi
 
-    # --- 2. Определение UUID (через API) ---
+    # Determine UUID (via API if name)
     local uuid="$repo_identifier"
+    local repo_name=""
     
-    # Проверка на формат UUID
     if [[ ! "$repo_identifier" =~ ^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$ ]]; then
-        echo "[INFO] Поиск репозитория по имени: '$repo_identifier'..."
+        echo "[INFO] Searching repository by name: '$repo_identifier'..."
         
         local list_response
         list_response=$(api_list_repositories)
         
         if [[ $? -ne 0 ]]; then
-            echo "[ERROR] Не удалось получить список репозиториев (API недоступен?)."
+            echo "[ERROR] API error"
             return 1
         fi
         
-        # Парсим JSON чтобы найти UUID по имени
         uuid=$(echo "$list_response" | python3 -c "
 import sys, json
 try:
     data = json.load(sys.stdin)
-    # Обработка списка или пагинации {results: [...]}
     repos = data.get('results', data) if isinstance(data, dict) else data
-    
     found = ''
     if isinstance(repos, list):
         for r in repos:
@@ -55,90 +58,117 @@ except:
 ")
         
         if [[ -z "$uuid" ]]; then
-            echo "[ERROR] Репозиторий с именем '$repo_identifier' не найден."
+            echo "[ERROR] Repository not found"
             return 1
         fi
-        echo "[INFO] Найден UUID: $uuid"
+        repo_name="$repo_identifier"
+        echo "[INFO] Found UUID: $uuid"
     fi
 
-    # --- 3. Поиск папки media на диске ---
-    # Пытаемся найти папку media вверх по иерархии или в текущей папке
+    # Find media/version_management folder
     local media_root=""
-    local current_dir=$(pwd)
     
-    # Простой поиск: проверяем текущую, родительскую и '..' до 3 уровней
-    for path in "." ".." "../.." "../../.."; do
+    for path in "." ".." "../.." "../../.." "../../../.."; do
         if [[ -d "$path/media/version_management" ]]; then
             media_root=$(cd "$path/media/version_management" && pwd)
             break
         fi
     done
     
-    # Если не нашли, проверяем переменную окружения
     if [[ -z "$media_root" && -n "$ERGOVCS_MEDIA_PATH" ]]; then
          media_root="$ERGOVCS_MEDIA_PATH"
     fi
 
     if [[ -z "$media_root" ]]; then
-        echo "[ERROR] Не удалось найти локальную папку 'media/version_management'."
-        echo "[HINT] Запустите команду из корня проекта бекенда или задайте ERGOVCS_MEDIA_PATH."
+        echo "[ERROR] Cannot find 'media/version_management' folder"
+        echo "[HINT] Run from project root or set ERGOVCS_MEDIA_PATH"
         return 1
     fi
     
     local source_repo_path="$media_root/$uuid"
     
     if [[ ! -d "$source_repo_path" ]]; then
-        echo "[ERROR] Папка репозитория не найдена на диске: $source_repo_path"
+        echo "[ERROR] Repository folder not found: $source_repo_path"
         return 1
     fi
 
-    # --- 4. Копирование файлов (Клонирование) ---
+    # Get repo name from .repo_info.json if available
+    if [[ -z "$repo_name" && -f "$source_repo_path/.repo_info.json" ]]; then
+        repo_name=$(python3 -c "
+import json
+try:
+    with open('$source_repo_path/.repo_info.json', 'r') as f:
+        print(json.load(f).get('name', ''))
+except:
+    print('')
+")
+    fi
+
+    # Create target directory
     if [[ ! -d "$target_path" ]]; then
         mkdir -p "$target_path"
     fi
     local abs_target_path
     abs_target_path=$(cd "$target_path" && pwd)
 
-    echo "[INFO] Клонирование файлов из $source_repo_path..."
+    echo "[INFO] Cloning repository from $source_repo_path..."
     
-    # Копируем всё, кроме системных папок, если нужно (но cp -r копирует всё)
-    # Используем точку в конце source, чтобы содержимое копировалось В target
-    cp -r "$source_repo_path/." "$abs_target_path/"
+    # Copy branches content (main branch by default)
+    if [[ -d "$source_repo_path/branches/main" ]]; then
+        cp -r "$source_repo_path/branches/main/." "$abs_target_path/"
+    elif [[ -d "$source_repo_path/branches" ]]; then
+        local first_branch=$(ls -1 "$source_repo_path/branches" | head -1)
+        if [[ -n "$first_branch" ]]; then
+            cp -r "$source_repo_path/branches/$first_branch/." "$abs_target_path/"
+        fi
+    else
+        cp -r "$source_repo_path/." "$abs_target_path/"
+    fi
     
     if [[ $? -ne 0 ]]; then
-        echo "[ERROR] Ошибка при копировании файлов."
+        echo "[ERROR] Failed to copy files"
         return 1
     fi
 
-    # --- 5. Сохранение конфига ---
-    local config_file="$HOME/.ergovcs/repos.json"
-    mkdir -p "$(dirname "$config_file")"
+    # Create .ergovcs folder with config
+    local ergovcs_path="$abs_target_path/.ergovcs"
+    mkdir -p "$ergovcs_path"
     
     python3 -c "
-import json, os, datetime
-file_path = '$config_file'
+import json, datetime
 entry = {
     'uuid': '$uuid',
+    'name': '$repo_name' if '$repo_name' else None,
     'local_path': '$abs_target_path',
     'remote_path': '$source_repo_path',
     'current_branch': 'main',
     'last_updated': datetime.datetime.now().isoformat()
 }
-
-data = {'repositories': {}}
-if os.path.exists(file_path):
-    try:
-        with open(file_path, 'r') as f:
-            data = json.load(f)
-    except: pass
-
-if 'repositories' not in data: data['repositories'] = {}
-data['repositories']['$uuid'] = entry
-
-with open(file_path, 'w') as f:
+data = {'repositories': {'$uuid': entry}}
+with open('$ergovcs_path/repos.json', 'w') as f:
     json.dump(data, f, indent=2)
 "
-    echo "[OK] Репозиторий успешно клонирован в $abs_target_path"
+
+    # Create .ergovcsignore file
+    if [[ ! -f "$abs_target_path/.ergovcsignore" ]]; then
+        cat > "$abs_target_path/.ergovcsignore" << 'EOF'
+# ERGO VCS ignore file
+.ergovcs/
+*.pyc
+__pycache__/
+*.log
+.env
+node_modules/
+.git/
+EOF
+    fi
+
+    echo "[OK] Repository cloned to $abs_target_path"
+    echo "  UUID: $uuid"
+    if [[ -n "$repo_name" ]]; then
+        echo "  Name: $repo_name"
+    fi
+    echo "  Config: $ergovcs_path/repos.json"
 }
 
 
@@ -660,276 +690,262 @@ cmd_update() {
 # Удаляет репозиторий с компа пользователя
 # ============================================================================
 cmd_remove() {
-  # 1. Получить UUID из аргументов
-  # 2. Найти локальную копию репозитория
-  # 3. Удалить локальную копию репозитория
-  # 4. Удалить запись из конфига (~/.ergovcs/repos.json)
-  # Примечание: это удаляет только локальную копию, не репозиторий на сервере
+  # Remove local repository by path
+  # Command: ergovcs remove <path> [--force]
   
-  local uuid=""
+  local repo_path=""
+  local force_remove="false"
   
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      *) uuid="$1" ;;
+      --force|-f) force_remove="true" ;;
+      *) 
+        if [[ "$1" != -* ]]; then
+          repo_path="$1"
+        fi
+        ;;
     esac
     shift || true
   done
   
-  if [[ -z "$uuid" ]]; then
-    echo "[ERROR] Необходимо указать UUID репозитория" >&2
-    echo "Использование: ergovcs remove <UUID>" >&2
-    exit 1
+  # Interactive input if not provided
+  if [[ -z "$repo_path" ]]; then
+    read -rp "Path to local repository: " repo_path
   fi
-  
-  local config_dir="$HOME/.ergovcs"
-  local repos_file="$config_dir/repos.json"
-
-  if [[ ! -f "$repos_file" ]]; then
-    echo "[ERROR] Файл конфигурации репозиториев не найден: $repos_file" >&2
-    echo "[INFO] Нечего удалять. Сначала клонируйте репозиторий (clone) или создайте запись в repos.json." >&2
-    exit 1
-  fi
-
-  if ! command -v python3 >/dev/null 2>&1; then
-    echo "[ERROR] Для команды remove нужен python3 (для работы с JSON)." >&2
+  if [[ -z "$repo_path" ]]; then
+    echo "[ERROR] Need to specify path to local repository" >&2
+    echo "Usage: ergovcs remove <path> [--force]" >&2
+    echo "Examples:" >&2
+    echo "  ergovcs remove /home/user/projects/myrepo" >&2
+    echo "  ergovcs remove ./my-project --force" >&2
     exit 1
   fi
 
-  # Достаём local_path из repos.json
-  local local_path=""
-  local_path="$(python3 - "$uuid" "$repos_file" <<'PY'
+  # Resolve path
+  if [[ ! "$repo_path" = /* ]]; then
+    repo_path="$(pwd)/$repo_path"
+  fi
+
+  if [[ ! -e "$repo_path" ]]; then
+    echo "[ERROR] Path not found: $repo_path" >&2
+    exit 1
+  fi
+
+  repo_path="$(cd "$repo_path" && pwd)"
+
+  # Get repo info from .ergovcs/repos.json if exists
+  local uuid=""
+  local repo_name=""
+  local ergovcs_path="$repo_path/.ergovcs"
+  local repos_json="$ergovcs_path/repos.json"
+
+  if [[ -f "$repos_json" ]]; then
+    read uuid repo_name < <(python3 - "$repos_json" <<'PY'
 import json, sys
-uuid = sys.argv[1]
-path = sys.argv[2]
 try:
-    with open(path, "r", encoding="utf-8") as f:
+    with open(sys.argv[1], 'r') as f:
         data = json.load(f)
-except FileNotFoundError:
-    sys.exit(2)
-except Exception:
-    sys.exit(3)
-repos = (data or {}).get("repositories") or {}
-entry = repos.get(uuid) or {}
-lp = entry.get("local_path") or ""
-sys.stdout.write(lp)
+    repos = data.get('repositories', {})
+    for k, v in repos.items():
+        print(k, v.get('name', ''))
+        break
+except:
+    print('', '')
 PY
-)" || true
+) || true
+  fi
 
-  if [[ -z "$local_path" ]]; then
-    echo "[ERROR] Репозиторий $uuid не найден в $repos_file" >&2
+  # Check .repo_info.json as fallback
+  if [[ -z "$uuid" && -f "$repo_path/.repo_info.json" ]]; then
+    read uuid repo_name < <(python3 - "$repo_path/.repo_info.json" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1], 'r') as f:
+        data = json.load(f)
+    print(data.get('public_id', ''), data.get('name', ''))
+except:
+    print('', '')
+PY
+) || true
+  fi
+
+  # Confirm deletion
+  if [[ "$force_remove" != "true" ]]; then
+    echo "[WARN] You are about to remove local repository:" >&2
+    echo "  Path: $repo_path" >&2
+    if [[ -n "$uuid" ]]; then echo "  UUID: $uuid" >&2; fi
+    if [[ -n "$repo_name" ]]; then echo "  Name: $repo_name" >&2; fi
+    echo "" >&2
+    echo "[!] This will delete ALL files in this folder!" >&2
+    echo "" >&2
+    read -rp "Are you sure? (y/N): " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+      echo "[INFO] Operation cancelled"
+      exit 0
+    fi
+  fi
+
+  # Delete the repository folder
+  if rm -rf -- "$repo_path"; then
+    echo "[OK] Repository removed: $repo_path"
+    if [[ -n "$repo_name" ]]; then
+      echo "[SUCCESS] Repository '$repo_name' removed from local computer"
+    else
+      echo "[SUCCESS] Repository removed from local computer"
+    fi
+    echo "[INFO] Repository still exists on server (if was cloned)"
+  else
+    echo "[ERROR] Failed to remove repository: $repo_path" >&2
     exit 1
   fi
-
-  echo "[INFO] Удаление локальной копии репозитория $uuid..."
-
-  if [[ -d "$local_path" || -f "$local_path" ]]; then
-    rm -rf -- "$local_path"
-    echo "[OK] Локальная копия удалена: $local_path"
-  else
-    echo "[WARN] Локальный путь не найден на диске: $local_path" >&2
-    echo "[INFO] Запись будет удалена из конфига." >&2
-  fi
-
-  # Удаляем запись из repos.json
-  python3 - "$uuid" "$repos_file" <<'PY'
-import json, sys
-uuid = sys.argv[1]
-path = sys.argv[2]
-with open(path, "r", encoding="utf-8") as f:
-    data = json.load(f) or {}
-repos = data.get("repositories")
-if not isinstance(repos, dict):
-    repos = {}
-if uuid in repos:
-    repos.pop(uuid, None)
-data["repositories"] = repos
-with open(path, "w", encoding="utf-8") as f:
-    json.dump(data, f, ensure_ascii=False, indent=2)
-    f.write("\n")
-PY
-
-  echo "[OK] Запись удалена из конфига: $repos_file"
 }
 
 cmd_create() {
   local name=""
   local description=""
   local is_private="false"
-  local is_read_only="false"
   local branch_name=""
   local cli_username=""
   local cli_password=""
-  local local_path=""
 
+  # Parse command line arguments
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --name|-n) shift; name="${1:-}" ;;
       --description|-d) shift; description="${1:-}" ;;
       --private|-p) is_private="true" ;;
-      --read-only) is_read_only="true" ;;
       --branch|-b) shift; branch_name="${1:-}" ;;
       --username|-u) shift; cli_username="${1:-}" ;;
       --password|-pw) shift; cli_password="${1:-}" ;;
-      --root|-r)
-        shift
-        local_path="${1:-}"
-        echo "[INFO] Указан локальный путь: $local_path"
-        ;;
       *)
         if [[ -z "$name" && "$1" != -* ]]; then
           name="$1"
-        else
-          echo "[WARN] Неизвестный параметр: $1" >&2
         fi
         ;;
     esac
     shift || true
   done
 
+  # Interactive input for required fields
+  echo ""
+  echo "=== Create new repository ==="
+  echo ""
+
   if [[ -z "$name" ]]; then
-    read -rp "Название репозитория: " name
+    read -rp "Repository name (required): " name
   fi
   if [[ -z "$name" ]]; then
-    echo "[ERROR] Необходимо указать название репозитория" >&2
+    echo "[ERROR] Repository name is required" >&2
     exit 1
   fi
 
-  if [[ -z "$local_path" ]]; then
-    local_path="$(pwd)"
+  if [[ -z "$cli_username" ]]; then
+    read -rp "Username (required for authentication): " cli_username
   fi
-  mkdir -p "$local_path"
-  local_path="$(cd "$local_path" && pwd)"
+  if [[ -z "$cli_username" ]]; then
+    echo "[ERROR] Username is required" >&2
+    exit 1
+  fi
 
-  if [[ -n "$cli_username" || -n "$cli_password" ]]; then
-    if [[ -z "$cli_username" || -z "$cli_password" ]]; then
-      echo "[WARN] Для авторизации нужны --username и --password (оба)." >&2
+  if [[ -z "$cli_password" ]]; then
+    read -rsp "Password (required for authentication): " cli_password
+    echo ""
+  fi
+  if [[ -z "$cli_password" ]]; then
+    echo "[ERROR] Password is required" >&2
+    exit 1
+  fi
+
+  if [[ -z "$description" ]]; then
+    read -rp "Description (optional, press Enter to skip): " description
+  fi
+
+  if [[ -z "$branch_name" ]]; then
+    read -rp "Initial branch name (default: main): " branch_input
+    if [[ -n "$branch_input" ]]; then
+      branch_name="$branch_input"
+    fi
+  fi
+
+  if [[ "$is_private" != "true" ]]; then
+    read -rp "Private repository? (y/N): " private_input
+    if [[ "$private_input" == "y" || "$private_input" == "Y" ]]; then
+      is_private="true"
     fi
   fi
 
   if ! command -v python3 >/dev/null 2>&1; then
-    echo "[ERROR] python3 не установлен. Установите его для работы с create." >&2
+    echo "[ERROR] python3 is required" >&2
     exit 1
   fi
 
+  # Build request body
   local body
-  body="$(python3 - <<PY
+  body="$(python3 -c "
 import json
-payload = {}
-name = ${name@Q}
-description = ${description@Q}
-branch = ${branch_name@Q}
-cli_username = ${cli_username@Q}
-cli_password = ${cli_password@Q}
-is_private = ${is_private@Q}
-is_read_only = ${is_read_only@Q}
-if name:
-    payload["name"] = name
-if description:
-    payload["description"] = description
-if is_private == "true":
-    payload["is_private"] = True
-if is_read_only == "true":
-    payload["is_read_only"] = True
-if branch:
-    payload["initial_branch_name"] = branch
-if cli_username:
-    payload["cli_username"] = cli_username
-if cli_password:
-    payload["cli_password"] = cli_password
+payload = {'name': '$name', 'cli_username': '$cli_username', 'cli_password': '$cli_password'}
+if '$description':
+    payload['description'] = '$description'
+if '$is_private' == 'true':
+    payload['is_private'] = True
+if '$branch_name':
+    payload['initial_branch_name'] = '$branch_name'
 print(json.dumps(payload))
-PY
-)"
+")"
 
-  echo "[INFO] Создание репозитория через API..."
+  echo ""
+  echo "[INFO] Creating repository via API..."
   local response
   response="$(api_request "POST" "/repositories/" "$body")"
   if [[ $? -ne 0 ]]; then
-    echo "[ERROR] Не удалось создать репозиторий" >&2
+    echo "[ERROR] Failed to create repository" >&2
     exit 1
   fi
 
-  local repo_id
-  local repo_name
-  local repo_path
-  local created_at
+  local repo_id repo_name_resp repo_path
 
-  repo_id="$(echo "$response" | python3 - <<'PY'
+  repo_id="$(echo "$response" | python3 -c "
 import json, sys
 try:
     data = json.load(sys.stdin)
-    print(data.get("public_id") or data.get("id") or "")
-except Exception:
-    print("")
-PY
-)"
-  repo_name="$(echo "$response" | python3 - <<'PY'
+    print(data.get('public_id') or data.get('id') or '')
+except:
+    print('')
+")"
+  repo_name_resp="$(echo "$response" | python3 -c "
 import json, sys
 try:
     data = json.load(sys.stdin)
-    print(data.get("name") or "")
-except Exception:
-    print("")
-PY
-)"
-  repo_path="$(echo "$response" | python3 - <<'PY'
+    print(data.get('name') or '')
+except:
+    print('')
+")"
+  repo_path="$(echo "$response" | python3 -c "
 import json, sys
 try:
     data = json.load(sys.stdin)
-    print(data.get("path") or "")
-except Exception:
-    print("")
-PY
-)"
-  created_at="$(echo "$response" | python3 - <<'PY'
-import json, sys
-try:
-    data = json.load(sys.stdin)
-    print(data.get("created_at") or "")
-except Exception:
-    print("")
-PY
-)"
+    print(data.get('path') or '')
+except:
+    print('')
+")"
+
   if [[ -z "$repo_path" && -n "$repo_id" ]]; then
     repo_path="media/version_management/$repo_id"
   fi
 
-  local ergovcs_dir="$local_path/.ergovcs"
-  mkdir -p "$ergovcs_dir"
-  cat >"$ergovcs_dir/config.json" <<JSON
-{
-  "repository_uuid": "$repo_id",
-  "name": "$repo_name",
-  "local_path": "$local_path",
-  "remote_path": "$repo_path",
-  "current_branch": "${branch_name:-main}",
-  "created_at": "$created_at"
-}
-JSON
-
-  local ignore_file="$local_path/.ergovcsignore"
-  if [[ ! -f "$ignore_file" ]]; then
-    cat >"$ignore_file" <<'EOF'
-.ergovcs/
-EOF
+  if [[ -z "$branch_name" ]]; then
+    branch_name="main"
   fi
 
-  local readme_file="$local_path/README.md"
-  if [[ ! -f "$readme_file" ]]; then
-    cat >"$readme_file" <<'EOF'
-# Repository
-
-Created by ergovcs.
-EOF
-  fi
-
-  echo "[OK] Репозиторий создан."
-  echo "UUID:   $repo_id"
-  echo "Название: $repo_name"
-  echo "Путь:   $repo_path"
-  echo "Локальный путь: $local_path"
-  if [[ -n "$created_at" ]]; then
-    echo "Создан: $created_at"
-  fi
+  echo ""
+  echo "[OK] Repository created successfully!"
+  echo "  UUID: $repo_id"
+  echo "  Name: $repo_name_resp"
+  echo "  Branch: $branch_name"
+  echo "  Path: $repo_path"
+  echo ""
+  echo "To clone this repository:"
+  echo "  ergovcs clone $repo_id <target_path>"
 }
 
 cmd_download() {

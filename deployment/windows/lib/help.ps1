@@ -5,9 +5,28 @@ function Show-Help {
 ergovcs <command> [options]
 
 Main repository commands:
-  clone <UUID>
-    Clone repository from media/version_management/<UUID>/ to local computer
-    Calls API: /api/repositories/{id}/clone/
+  create [name]
+    Create new repository on server via API
+    Interactive mode: prompts for name, username, password, description, branch, private flag
+    Options:
+      --username, -u    Username for authentication
+      --password, -pw   Password for authentication
+      --description, -d Repository description
+      --branch, -b      Initial branch name (default: main)
+      --private, -p     Create private repository
+    Examples:
+      ergovcs create
+      ergovcs create "My Project"
+      ergovcs create --name "My Project" -u admin -pw secret
+    
+  clone <uuid|name> [target_path]
+    Clone repository from server to local computer
+    Copies files from media/version_management/<uuid>/ to target path
+    Creates .ergovcs/ folder and .ergovcsignore file
+    Examples:
+      ergovcs clone abc-123-def-456 ./my-project
+      ergovcs clone "My Repository" C:\Projects\MyRepo
+      ergovcs clone abc-123
     
   add <file.extension>
     Add file for commit to staging area
@@ -21,26 +40,26 @@ Main repository commands:
     
   push <branch>
     Push changes to server to folder media/version_management/<UUID>/
-    Calls API: /api/repositories/{id}/push/
     
   update <branch>
     Update local repository, pulling changes from server
-    Calls API: /api/repositories/{id}/update/
     Note: doesn't matter which branch user has downloaded
     
-  remove <UUID>
-    Remove local copy of repository from user's computer
+  remove <path> [--force]
+    Remove cloned repository from local computer by path
+    --force (-f): skip confirmation prompt
     Note: removes only local copy, not repository on server
+    Examples:
+      ergovcs remove C:\Projects\MyRepo
+      ergovcs remove ./my-project
+      ergovcs remove ./my-project --force
 
 Helper commands:
-  create [--name <name>] [--description <text>] [--private] [--read-only] [--branch <branch>] [--username <u>] [--password <p>] [--root <path>]
-    Create new repository via API and prepare local files
-
   branch <list|create|delete|set-default> [options]
     Branch management (via API)
     Examples:
       ergovcs branch list --repo <uuid>
-      ergovcs branch create --repo <uuid> --name <branch> --username <u> --password <p>
+      ergovcs branch create --repo <uuid> --name <branch>
       ergovcs branch delete --id <branch_id>
       ergovcs branch set-default --repo <uuid> --name <branch>
 
@@ -73,22 +92,17 @@ Analytics and forecasting:
   help
     Show this help
 
-Flags:
-  --root <path>   specify project root manually (auto-detected by default)
-
 Examples:
-  ergovcs clone abc-123-def-456
+  ergovcs create "My Project"
+  ergovcs clone abc-123-def-456 ./my-project
   ergovcs add src\main.py
   ergovcs commit -m "Added new feature"
   ergovcs push main
   ergovcs update main
-  ergovcs remove abc-123-def-456
-  ergovcs create --name "My repository"
+  ergovcs remove ./my-project
   ergovcs download --source "C:\path\to\repo.zip"
   ergovcs files --repo <uuid>
   ergovcs stats --repo <uuid>
   ergovcs forecast --repo <uuid> --days 30
-  powershell -ExecutionPolicy Bypass -File .\version_manager.ps1 install-cli
-  powershell -ExecutionPolicy Bypass -File .\version_manager.ps1 uninstall-cli
 "@ | Write-Host
 }

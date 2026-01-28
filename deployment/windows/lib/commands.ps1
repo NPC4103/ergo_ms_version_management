@@ -5,128 +5,176 @@
 # Команда: ergovcs clone <путь> <имя_или_uuid>
 # ============================================================================
 function Invoke-Clone {
-  param([string[]]$Args)
+  param([string[]]$CloneArgs)
   
+  $uuid = $null
   $targetPath = $null
-  $repoIdentifier = $null
+  $repoName = $null
 
-  # 1. Парсинг
-  if ($Args.Count -ge 2) {
-    $targetPath = $Args[0]
-    $repoIdentifier = $Args[1]
+  # Parse arguments: ergovcs clone <uuid|name> <target_path>
+  for ($i = 0; $i -lt $CloneArgs.Count; $i++) {
+    $arg = $CloneArgs[$i]
+    if (-not $arg.StartsWith("-")) {
+      if (-not $uuid) {
+        $uuid = $arg
+      } elseif (-not $targetPath) {
+        $targetPath = $arg
+      }
+    }
   }
-  elseif ($Args.Count -eq 1) {
-    $targetPath = "."
-    $repoIdentifier = $Args[0]
+
+  # Interactive input if not provided
+  if (-not $uuid) {
+    $uuid = Read-Host "Repository UUID or name"
   }
-  else {
-    Write-Host "[ERROR] Ispolzovanie: ergovcs clone <put> <imya_ili_uuid>" -ForegroundColor Red
+  if (-not $uuid) {
+    Write-Host "[ERROR] Need to specify repository UUID or name" -ForegroundColor Red
+    Write-Host "Usage: ergovcs clone <uuid|name> [target_path]" -ForegroundColor Yellow
     exit 1
   }
 
-  $uuid = $repoIdentifier
+  if (-not $targetPath) {
+    $targetPath = Read-Host "Target path (default: current directory)"
+    if (-not $targetPath) { $targetPath = "." }
+  }
 
-  # 2. Поиск UUID (через API), если передано имя
-  if ($repoIdentifier -notmatch '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') {
-    Write-Host "[INFO] Poisk repozitoriya po imeni '$repoIdentifier'..." -ForegroundColor Cyan
+  # If not UUID format, search by name via API
+  if ($uuid -notmatch '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') {
+    Write-Host "[INFO] Searching repository by name '$uuid'..." -ForegroundColor Cyan
     
-    $listResponse = Invoke-ApiListRepositories # Эта функция из repo.ps1 нам все еще НУЖНА
+    $listResponse = Invoke-ApiListRepositories
     if (-not $listResponse) {
-      Write-Host "[ERROR] Oshibka API." -ForegroundColor Red
+      Write-Host "[ERROR] API error" -ForegroundColor Red
       exit 1
     }
     
     try {
       $data = $listResponse | ConvertFrom-Json
       $repos = if ($data.results) { $data.results } else { $data }
-      $found = $repos | Where-Object { $_.name -eq $repoIdentifier }
+      $found = $repos | Where-Object { $_.name -eq $uuid }
       
       if ($found) {
+        $repoName = $found.name
         $uuid = if ($found.public_id) { $found.public_id } else { $found.uuid }
-        Write-Host "[INFO] Najden UUID: $uuid" -ForegroundColor Gray
+        Write-Host "[INFO] Found UUID: $uuid" -ForegroundColor Gray
       } else {
-        Write-Host "[ERROR] Repozitorij ne najden." -ForegroundColor Red
+        Write-Host "[ERROR] Repository not found" -ForegroundColor Red
         exit 1
       }
     }
     catch {
-      Write-Host "[ERROR] Oshibka obrabotki otveta API." -ForegroundColor Red
+      Write-Host "[ERROR] Failed to parse API response" -ForegroundColor Red
       exit 1
     }
   }
 
-  # 3. Поиск папки media (Локальная ФС)
+  # Find media/version_management folder
   $mediaPath = $null
   
-  # Проверяем переменную окружения
   if ($env:ERGOVCS_MEDIA_PATH) {
     $mediaPath = $env:ERGOVCS_MEDIA_PATH
-  }
-  else {
-    # Ищем вверх от текущей директории
+  } else {
     $current = Get-Location
-    for ($i = 0; $i -lt 4; $i++) {
+    for ($i = 0; $i -lt 5; $i++) {
       $testPath = Join-Path $current.Path "media\version_management"
       if (Test-Path $testPath) {
         $mediaPath = $testPath
         break
       }
-      $current = try { Get-Item (Split-Path $current.Path -Parent) } catch { $null }
-      if (-not $current) { break }
+      $parent = Split-Path $current.Path -Parent
+      if (-not $parent) { break }
+      $current = Get-Item $parent
     }
   }
 
   if (-not $mediaPath) {
-    Write-Host "[ERROR] Ne udalos najti papku 'media\version_management'." -ForegroundColor Red
-    Write-Host "[HINT] Zajdite v papku proekta ili ustanovite peremennuyu ERGOVCS_MEDIA_PATH" -ForegroundColor Yellow
+    Write-Host "[ERROR] Cannot find 'media\version_management' folder" -ForegroundColor Red
+    Write-Host "[HINT] Go to project folder or set ERGOVCS_MEDIA_PATH variable" -ForegroundColor Yellow
     exit 1
   }
 
   $sourceRepoPath = Join-Path $mediaPath $uuid
 
   if (-not (Test-Path $sourceRepoPath)) {
-    Write-Host "[ERROR] Papka repozitoriya otsutstvuet na diske: $sourceRepoPath" -ForegroundColor Red
+    Write-Host "[ERROR] Repository folder not found: $sourceRepoPath" -ForegroundColor Red
     exit 1
   }
 
-  # 4. Копирование (Copy-Item)
-  if (-not (Test-Path $targetPath)) {
-    New-Item -ItemType Directory -Force -Path $targetPath | Out-Null
-  }
-  $absTargetPath = Resolve-Path $targetPath
-
-  Write-Host "[INFO] Kopirovanie fajlov iz $sourceRepoPath..." -ForegroundColor Cyan
-  
-  # Recurse копирует содержимое
-  Copy-Item -Path "$sourceRepoPath\*" -Destination $absTargetPath -Recurse -Force
-
-  # 5. Обновление конфига
-  $configDir = Join-Path $env:USERPROFILE ".ergovcs"
-  $configFile = Join-Path $configDir "repos.json"
-  if (-not (Test-Path $configDir)) { New-Item -ItemType Directory -Force -Path $configDir | Out-Null }
-
-  $configData = @{ repositories = @{} }
-  if (Test-Path $configFile) {
+  # Get repo info from .repo_info.json if exists
+  $repoInfoPath = Join-Path $sourceRepoPath ".repo_info.json"
+  if ((Test-Path $repoInfoPath) -and (-not $repoName)) {
     try {
-        $existing = Get-Content $configFile -Raw | ConvertFrom-Json
-        if ($existing.repositories) {
-            foreach ($p in $existing.repositories.PSObject.Properties) {
-                $configData.repositories[$p.Name] = $p.Value
-            }
-        }
+      $repoInfo = Get-Content $repoInfoPath -Raw | ConvertFrom-Json
+      $repoName = $repoInfo.name
     } catch {}
   }
 
-  $configData.repositories[$uuid] = @{
+  # Create target directory
+  if (-not (Test-Path $targetPath)) {
+    New-Item -ItemType Directory -Force -Path $targetPath | Out-Null
+  }
+  $absTargetPath = (Resolve-Path $targetPath).Path
+
+  Write-Host "[INFO] Cloning repository from $sourceRepoPath..." -ForegroundColor Cyan
+  
+  # Copy all files from source (branches folder)
+  $branchesPath = Join-Path $sourceRepoPath "branches"
+  if (Test-Path $branchesPath) {
+    # Copy branches content (main branch by default)
+    $mainBranchPath = Join-Path $branchesPath "main"
+    if (Test-Path $mainBranchPath) {
+      Copy-Item -Path "$mainBranchPath\*" -Destination $absTargetPath -Recurse -Force -ErrorAction SilentlyContinue
+    } else {
+      # Try first available branch
+      $branches = Get-ChildItem -Path $branchesPath -Directory | Select-Object -First 1
+      if ($branches) {
+        Copy-Item -Path "$($branches.FullName)\*" -Destination $absTargetPath -Recurse -Force -ErrorAction SilentlyContinue
+      }
+    }
+  } else {
+    # Fallback: copy everything
+    Copy-Item -Path "$sourceRepoPath\*" -Destination $absTargetPath -Recurse -Force
+  }
+
+  # Create .ergovcs folder with config
+  $ergovcsPath = Join-Path $absTargetPath ".ergovcs"
+  if (-not (Test-Path $ergovcsPath)) {
+    New-Item -ItemType Directory -Force -Path $ergovcsPath | Out-Null
+  }
+
+  # Create repos.json in .ergovcs
+  $reposJsonPath = Join-Path $ergovcsPath "repos.json"
+  $repoEntry = @{
     uuid = $uuid
-    local_path = $absTargetPath.Path
+    name = $repoName
+    local_path = $absTargetPath
     remote_path = $sourceRepoPath
     current_branch = "main"
     last_updated = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ssZ")
   }
+  $repoData = @{ repositories = @{ "$uuid" = $repoEntry } }
+  $repoData | ConvertTo-Json -Depth 10 | Set-Content $reposJsonPath -Encoding UTF8
 
-  $configData | ConvertTo-Json -Depth 10 | Set-Content $configFile -Encoding UTF8
-  Write-Host "[OK] Repozitorij klonirovan v $absTargetPath" -ForegroundColor Green
+  # Create .ergovcsignore file
+  $ignoreFilePath = Join-Path $absTargetPath ".ergovcsignore"
+  if (-not (Test-Path $ignoreFilePath)) {
+    $ignoreContent = @(
+      "# ERGO VCS ignore file",
+      ".ergovcs/",
+      "*.pyc",
+      "__pycache__/",
+      "*.log",
+      ".env",
+      "node_modules/",
+      ".git/"
+    ) -join "`r`n"
+    $ignoreContent | Set-Content $ignoreFilePath -Encoding UTF8
+  }
+
+  Write-Host "[OK] Repository cloned to $absTargetPath" -ForegroundColor Green
+  Write-Host "  UUID: $uuid" -ForegroundColor Cyan
+  if ($repoName) { Write-Host "  Name: $repoName" -ForegroundColor Cyan }
+  Write-Host "  Config: $reposJsonPath" -ForegroundColor Gray
 }
 
 # ============================================================================
@@ -443,7 +491,7 @@ function Invoke-Commit {
   }
   
   # 4. Прочитать staging area
-  $stagingFile = Join-Path $repoRoot ".ergovcs" "staging.json"
+  $stagingFile = Join-Path (Join-Path $repoRoot ".ergovcs") "staging.json"
   if (-not (Test-Path $stagingFile)) {
     Write-Host "[ERROR] Staging area ne najden." -ForegroundColor Red
     exit 1
@@ -556,7 +604,7 @@ function Invoke-Push {
   }
 
   # 4. Прочитать коммит из commit.json
-  $commitFile = Join-Path $repoRoot ".ergovcs" "commit.json"
+  $commitFile = Join-Path (Join-Path $repoRoot ".ergovcs") "commit.json"
   if (-not (Test-Path $commitFile)) {
     Write-Host "[ERROR] Net kommita dlya otpravki. Sozdajte kommit s pomoshchyu komandy 'commit'." -ForegroundColor Red
     exit 1
@@ -662,13 +710,13 @@ function Invoke-Update {
   Write-Host "[INFO] Zapros obnovlenij iz vetki '$branch'..." -ForegroundColor Cyan
 
   # 4. Сохранить текущее состояние staging area (если есть)
-  $stagingFile = Join-Path $repoRoot ".ergovcs" "staging.json"
+  $stagingFile = Join-Path (Join-Path $repoRoot ".ergovcs") "staging.json"
   $stagingBackup = $null
   if (Test-Path $stagingFile) {
     try {
       $stagingJson = Get-Content $stagingFile -Raw -Encoding UTF8
       $stagingBackup = $stagingJson | ConvertFrom-Json -ErrorAction Stop
-      $stagingBackupPath = Join-Path $repoRoot ".ergovcs" "staging.backup.json"
+      $stagingBackupPath = Join-Path (Join-Path $repoRoot ".ergovcs") "staging.backup.json"
       $stagingJson | Set-Content -Path $stagingBackupPath -Encoding UTF8
       Write-Host "[INFO] Staging area sohranen dlya vosstanovleniya." -ForegroundColor Gray
     }
@@ -767,7 +815,7 @@ function Invoke-Update {
     }
     
     # 10. Удалить staging backup
-    $stagingBackupPath = Join-Path $repoRoot ".ergovcs" "staging.backup.json"
+    $stagingBackupPath = Join-Path (Join-Path $repoRoot ".ergovcs") "staging.backup.json"
     if (Test-Path $stagingBackupPath) {
       Remove-Item -Path $stagingBackupPath -Force -ErrorAction SilentlyContinue
     }
@@ -788,63 +836,119 @@ function Invoke-Update {
 }
 
 # ============================================================================
-# Удаление репозитория
-# Команда: ergovcs remove <UUID>
-# Удаляет репозиторий с компа пользователя
+# Remove local repository
+# Command: ergovcs remove <path>
+# Removes cloned repository from user's computer by path
 # ============================================================================
 function Invoke-Remove {
-  param([string[]]$Args)
+  param([string[]]$RemoveArgs)
 
-  # TODO: Реализовать удаление репозитория
-  # 1. Получить UUID из аргументов
-  # 2. Найти локальную копию репозитория
-  # 3. Удалить локальную копию репозитория
-  # Примечание: это удаляет только локальную копию, не репозиторий на сервере
+  $repoPath = $null
+  $forceRemove = $false
 
-  $uuid = $null
-
-  for ($i = 0; $i -lt $Args.Count; $i++) {
-    $uuid = $Args[$i]
+  # Parse arguments
+  for ($i = 0; $i -lt $RemoveArgs.Count; $i++) {
+    $arg = $RemoveArgs[$i]
+    switch ($arg) {
+      "--force" { $forceRemove = $true }
+      "-f" { $forceRemove = $true }
+      default {
+        if (-not $arg.StartsWith("-")) {
+          $repoPath = $arg
+        }
+      }
+    }
   }
 
-  if (-not $uuid) {
-    Write-Host "[ERROR] Neobhodimo ukazat UUID repozitoriya" -ForegroundColor Red
-    Write-Host "Usage: ergovcs remove <UUID>" -ForegroundColor Yellow
+  # Interactive input if not provided
+  if (-not $repoPath) {
+    $repoPath = Read-Host "Path to local repository"
+  }
+  if (-not $repoPath) {
+    Write-Host "[ERROR] Need to specify path to local repository" -ForegroundColor Red
+    Write-Host "Usage: ergovcs remove <path> [--force]" -ForegroundColor Yellow
+    Write-Host "Examples:" -ForegroundColor Gray
+    Write-Host "  ergovcs remove C:\Projects\MyRepo" -ForegroundColor Gray
+    Write-Host "  ergovcs remove ./my-repo --force" -ForegroundColor Gray
     exit 1
   }
 
-  # TODO: Реализовать удаление локальной копии
-  Write-Host "[INFO] Udalenie lokalnoj kopii repozitoriya $uuid..." -ForegroundColor Cyan
-
-  if (Test-Path -LiteralPath $localPath) {
-    try {
-      $item = Get-Item -LiteralPath $localPath -ErrorAction Stop
-      if ($item.PSIsContainer) {
-        Remove-Item -LiteralPath $localPath -Recurse -Force -ErrorAction Stop
-      } else {
-        Remove-Item -LiteralPath $localPath -Force -ErrorAction Stop
-      }
-      Write-Host "[OK] Lokalnaya kopiya udalena: $localPath" -ForegroundColor Green
-    } catch {
-      Write-Host "[ERROR] Ne udalos udalit lokalnuyu kopiyu: $localPath" -ForegroundColor Red
-      Write-Host $_.Exception.Message -ForegroundColor Yellow
-      exit 1
-    }
-  } else {
-    Write-Host "[WARN] Lokalnyj put ne najden na diske: $localPath" -ForegroundColor Yellow
-    Write-Host "[INFO] Zapis vse ravno budet udalena iz konfiga." -ForegroundColor Yellow
+  # Resolve path
+  if (-not [System.IO.Path]::IsPathRooted($repoPath)) {
+    $repoPath = Join-Path (Get-Location).Path $repoPath
   }
 
-  # Удаляем запись из repos.json
-  $null = $repos.PSObject.Properties.Remove($uuid)
-  $data.repositories = $repos
+  if (-not (Test-Path $repoPath)) {
+    Write-Host "[ERROR] Path not found: $repoPath" -ForegroundColor Red
+    exit 1
+  }
 
+  $repoPath = (Resolve-Path $repoPath).Path
+
+  # Check if it's an ERGO VCS repository (has .ergovcs folder)
+  $ergovcsPath = Join-Path $repoPath ".ergovcs"
+  $reposJsonPath = Join-Path $ergovcsPath "repos.json"
+  
+  $uuid = $null
+  $repoName = $null
+
+  if (Test-Path $reposJsonPath) {
+    try {
+      $configData = Get-Content $reposJsonPath -Raw | ConvertFrom-Json
+      if ($configData.repositories) {
+        # Get first repository from config
+        $firstRepo = $configData.repositories.PSObject.Properties | Select-Object -First 1
+        if ($firstRepo) {
+          $uuid = $firstRepo.Name
+          $repoName = $firstRepo.Value.name
+        }
+      }
+    } catch {
+      Write-Host "[DEBUG] Failed to read repos.json: $_" -ForegroundColor Gray
+    }
+  }
+
+  if (-not $uuid) {
+    # Check .repo_info.json (for directly copied from media)
+    $repoInfoPath = Join-Path $repoPath ".repo_info.json"
+    if (Test-Path $repoInfoPath) {
+      try {
+        $repoInfo = Get-Content $repoInfoPath -Raw | ConvertFrom-Json
+        $uuid = $repoInfo.public_id
+        $repoName = $repoInfo.name
+      } catch {}
+    }
+  }
+
+  # Confirm deletion
+  if (-not $forceRemove) {
+    Write-Host "[WARN] You are about to remove local repository:" -ForegroundColor Yellow
+    Write-Host "  Path: $repoPath" -ForegroundColor Cyan
+    if ($uuid) { Write-Host "  UUID: $uuid" -ForegroundColor Cyan }
+    if ($repoName) { Write-Host "  Name: $repoName" -ForegroundColor Cyan }
+    Write-Host ""
+    Write-Host "[!] This will delete ALL files in this folder!" -ForegroundColor Red
+    Write-Host ""
+    $confirm = Read-Host "Are you sure? (y/N)"
+    if ($confirm -ne "y" -and $confirm -ne "Y") {
+      Write-Host "[INFO] Operation cancelled" -ForegroundColor Yellow
+      exit 0
+    }
+  }
+
+  # Delete the repository folder
   try {
-    $jsonOut = $data | ConvertTo-Json -Depth 10
-    $jsonOut | Set-Content -Path $reposFile -Encoding UTF8
-    Write-Host "[OK] Zapis udalena iz konfiga: $reposFile" -ForegroundColor Green
+    Remove-Item -LiteralPath $repoPath -Recurse -Force -ErrorAction Stop
+    Write-Host "[OK] Repository removed: $repoPath" -ForegroundColor Green
+    
+    if ($repoName) {
+      Write-Host "[SUCCESS] Repository '$repoName' removed from local computer" -ForegroundColor Green
+    } else {
+      Write-Host "[SUCCESS] Repository removed from local computer" -ForegroundColor Green
+    }
+    Write-Host "[INFO] Repository still exists on server (if was cloned)" -ForegroundColor Gray
   } catch {
-    Write-Host "[ERROR] Ne udalos obnovit fajl konfiga: $reposFile" -ForegroundColor Red
+    Write-Host "[ERROR] Failed to remove repository: $repoPath" -ForegroundColor Red
     Write-Host $_.Exception.Message -ForegroundColor Yellow
     exit 1
   }
@@ -856,12 +960,11 @@ function Invoke-Create {
   $name = $null
   $description = $null
   $isPrivate = $false
-  $isReadOnly = $false
   $branchName = $null
   $cliUsername = $null
   $cliPassword = $null
-  $localPath = $null
 
+  # Parse command line arguments
   for ($i = 0; $i -lt $RepoArg.Count; $i++) {
     $arg = $RepoArg[$i]
     switch -Wildcard ($arg) {
@@ -871,27 +974,12 @@ function Invoke-Create {
       "-d" { $i++; if ($i -lt $RepoArg.Count) { $description = $RepoArg[$i] } }
       "--private" { $isPrivate = $true }
       "-p" { $isPrivate = $true }
-      "--read-only" { $isReadOnly = $true }
       "--branch" { $i++; if ($i -lt $RepoArg.Count) { $branchName = $RepoArg[$i] } }
       "-b" { $i++; if ($i -lt $RepoArg.Count) { $branchName = $RepoArg[$i] } }
       "--username" { $i++; if ($i -lt $RepoArg.Count) { $cliUsername = $RepoArg[$i] } }
       "-u" { $i++; if ($i -lt $RepoArg.Count) { $cliUsername = $RepoArg[$i] } }
       "--password" { $i++; if ($i -lt $RepoArg.Count) { $cliPassword = $RepoArg[$i] } }
       "-pw" { $i++; if ($i -lt $RepoArg.Count) { $cliPassword = $RepoArg[$i] } }
-      "--root" {
-        $i++
-        if ($i -lt $RepoArg.Count) {
-          $localPath = $RepoArg[$i]
-          Write-Host "[INFO] Ukazan lokalnyj put: $localPath" -ForegroundColor Cyan
-        }
-      }
-      "-r" {
-        $i++
-        if ($i -lt $RepoArg.Count) {
-          $localPath = $RepoArg[$i]
-          Write-Host "[INFO] Ukazan lokalnyj put: $localPath" -ForegroundColor Cyan
-        }
-      }
       default {
         if (-not $name -and -not $arg.StartsWith("-")) {
           $name = $arg
@@ -900,45 +988,70 @@ function Invoke-Create {
     }
   }
 
+  # Interactive input for required fields
+  Write-Host ""
+  Write-Host "=== Create new repository ===" -ForegroundColor Cyan
+  Write-Host ""
+
   if (-not $name) {
-    $name = Read-Host "Repository name"
+    $name = Read-Host "Repository name (required)"
   }
   if (-not $name) {
-    Write-Host "[ERROR] Neobhodimo ukazat nazvanie repozitoriya" -ForegroundColor Red
+    Write-Host "[ERROR] Repository name is required" -ForegroundColor Red
     exit 1
   }
 
-  if (-not $localPath) {
-    $localPath = (Get-Location).Path
+  if (-not $cliUsername) {
+    $cliUsername = Read-Host "Username (required for authentication)"
+  }
+  if (-not $cliUsername) {
+    Write-Host "[ERROR] Username is required" -ForegroundColor Red
+    exit 1
   }
 
-  if (-not (Test-Path $localPath)) {
-    New-Item -ItemType Directory -Force -Path $localPath | Out-Null
+  if (-not $cliPassword) {
+    $securePassword = Read-Host "Password (required for authentication)" -AsSecureString
+    $cliPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword))
   }
-  $localPath = (Resolve-Path $localPath).Path
+  if (-not $cliPassword) {
+    Write-Host "[ERROR] Password is required" -ForegroundColor Red
+    exit 1
+  }
 
-  if ($cliUsername -or $cliPassword) {
-    if (-not $cliUsername -or -not $cliPassword) {
-      Write-Host "[WARN] Dlya avtorizacii nuzhny --username i --password (oba)." -ForegroundColor Yellow
+  if (-not $description) {
+    $description = Read-Host "Description (optional, press Enter to skip)"
+  }
+
+  if (-not $branchName) {
+    $branchInput = Read-Host "Initial branch name (default: main)"
+    if ($branchInput) { $branchName = $branchInput }
+  }
+
+  if (-not $isPrivate) {
+    $privateInput = Read-Host "Private repository? (y/N)"
+    if ($privateInput -eq "y" -or $privateInput -eq "Y") {
+      $isPrivate = $true
     }
   }
 
-  $bodyObj = @{}
-  if ($name) { $bodyObj["name"] = $name }
+  # Build request body
+  $bodyObj = @{
+    "name" = $name
+    "cli_username" = $cliUsername
+    "cli_password" = $cliPassword
+  }
   if ($description) { $bodyObj["description"] = $description }
   if ($isPrivate) { $bodyObj["is_private"] = $true }
-  if ($isReadOnly) { $bodyObj["is_read_only"] = $true }
-  if ($branchName) { $bodyObj["initial_branch_name"] = $branchName }
-  if ($cliUsername) { $bodyObj["cli_username"] = $cliUsername }
-  if ($cliPassword) { $bodyObj["cli_password"] = $cliPassword }
+  if ($branchName) { $bodyObj["initial_branch_name"] = $branchName } else { $branchName = "main" }
 
   $bodyJson = $bodyObj | ConvertTo-Json -Depth 5
 
-  Write-Host "[INFO] Sozdanie repozitoriya cherez API..." -ForegroundColor Cyan
+  Write-Host ""
+  Write-Host "[INFO] Creating repository via API..." -ForegroundColor Cyan
   $response = Invoke-ApiRequest -Method "POST" -Endpoint "/repositories/" -Body $bodyJson
 
   if (-not $response) {
-    Write-Host "[ERROR] Ne udalos sozdat repozitorij" -ForegroundColor Red
+    Write-Host "[ERROR] Failed to create repository" -ForegroundColor Red
     exit 1
   }
 
@@ -953,63 +1066,18 @@ function Invoke-Create {
       $repoPath = "media/version_management/$repoId"
     }
 
-    $ergovcsPath = Join-Path $localPath ".ergovcs"
-    $reposJsonPath = Join-Path $ergovcsPath "repos.json"
-    if (-not (Test-Path $ergovcsPath)) {
-      New-Item -ItemType Directory -Path $ergovcsPath -Force | Out-Null
-    }
-
-    $repoEntry = @{
-      "uuid" = $repoId
-      "local_path" = $localPath
-      "remote_path" = $repoPath
-      "current_branch" = if ($branchName) { $branchName } else { "main" }
-      "last_updated" = if ($createdAt) { $createdAt } else { Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ" }
-    }
-
-    if (Test-Path $reposJsonPath) {
-      $existingData = Get-Content $reposJsonPath -Raw | ConvertFrom-Json -AsHashtable
-      if (-not ($existingData.repositories -is [Hashtable])) {
-        $existingData.repositories = @{}
-      }
-      $existingData.repositories[$repoId] = $repoEntry
-      $jsonContent = $existingData | ConvertTo-Json -Depth 10
-      Set-Content -Path $reposJsonPath -Value $jsonContent -Encoding UTF8
-    } else {
-      $repoData = @{ repositories = @{ "$repoId" = $repoEntry } }
-      $jsonContent = $repoData | ConvertTo-Json -Depth 10
-      Set-Content -Path $reposJsonPath -Value $jsonContent -Encoding UTF8
-    }
-
-    $ignoreFile = Join-Path $localPath ".ergovcsignore"
-    if (-not (Test-Path $ignoreFile)) {
-      '.ergovcs/' | Set-Content -Path $ignoreFile -Encoding ASCII
-    }
-
-    $readmeFile = Join-Path $localPath "README.md"
-    if (-not (Test-Path $readmeFile)) {
-      @(
-        "# Repository",
-        "",
-        "Created by ergovcs."
-      ) -join "`r`n" | Set-Content -Path $readmeFile -Encoding ASCII
-    }
-
-    Write-Host "[OK] Repozitorij sozdan i dobavlen v konfiguraciyu." -ForegroundColor Green
-    Write-Host "UUID: $repoId"
-    Write-Host "Name: $repoName"
-    Write-Host "Local path: $localPath"
-    Write-Host "Remote path: $repoPath"
-    Write-Host "Config saved to: $reposJsonPath"
-
-    if ($createdAt) {
-      Write-Host "Created: $createdAt"
-    }
+    Write-Host ""
+    Write-Host "[OK] Repository created successfully!" -ForegroundColor Green
+    Write-Host "  UUID: $repoId" -ForegroundColor Cyan
+    Write-Host "  Name: $repoName" -ForegroundColor Cyan
+    Write-Host "  Branch: $branchName" -ForegroundColor Cyan
+    Write-Host "  Path: $repoPath" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "To clone this repository:" -ForegroundColor Yellow
+    Write-Host "  ergovcs clone $repoId <target_path>" -ForegroundColor White
   }
   catch {
-    Write-Host "[ERROR] Ne udalos rasparsit otvet ot API ili sozdat konfiguraciyu" -ForegroundColor Red
-    Write-Host "Error: $_" -ForegroundColor Red
-    Write-Host "API response: $response" -ForegroundColor Yellow
+    Write-Host "[ERROR] Failed to parse API response: $_" -ForegroundColor Red
     exit 1
   }
 }

@@ -449,7 +449,7 @@ function Get-ProjectContent {
   }
   
   # 2. Try to get from backup.json
-  $backupFile = Join-Path $LocalPath ".ergovcs" "backup.json"
+  $backupFile = Join-Path (Join-Path $LocalPath ".ergovcs") "backup.json"
   if (Test-Path $backupFile) {
     try {
       $backupContent = Get-Content $backupFile -Raw -Encoding UTF8
@@ -595,7 +595,7 @@ function Save-BackupJson {
     [string]$RepoUuid
   )
   
-  $backupFile = Join-Path $LocalPath ".ergovcs" "backup.json"
+  $backupFile = Join-Path (Join-Path $LocalPath ".ergovcs") "backup.json"
   $backupDir = Split-Path $backupFile -Parent
   if (-not (Test-Path $backupDir)) {
     New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
@@ -652,7 +652,7 @@ function Get-CurrentBranch {
   param([string]$LocalPath)
   
   # Try to get from local config
-  $localReposFile = Join-Path $LocalPath ".ergovcs" "repos.json"
+  $localReposFile = Join-Path (Join-Path $LocalPath ".ergovcs") "repos.json"
   if (Test-Path $localReposFile) {
     try {
       $reposJson = Get-Content $localReposFile -Raw -Encoding UTF8
@@ -668,7 +668,7 @@ function Get-CurrentBranch {
   }
   
   # Fallback: global config
-  $globalReposFile = Join-Path $env:USERPROFILE ".ergovcs" "repos.json"
+  $globalReposFile = Join-Path (Join-Path $env:USERPROFILE ".ergovcs") "repos.json"
   if (Test-Path $globalReposFile) {
     try {
       $reposJson = Get-Content $globalReposFile -Raw -Encoding UTF8

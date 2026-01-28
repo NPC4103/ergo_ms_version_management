@@ -67,7 +67,7 @@ function Get-CurrentRepositoryUuid {
   Write-Host "[DEBUG] Repository root: $LocalPath" -ForegroundColor Gray
   
   # Path to local repos.json file in .ergovcs directory
-  $localReposFile = Join-Path $LocalPath ".ergovcs" "repos.json"
+  $localReposFile = Join-Path (Join-Path $LocalPath ".ergovcs") "repos.json"
   Write-Host "[DEBUG] Looking for local file: $localReposFile" -ForegroundColor Gray
   
   # Try to read from local .ergovcs/repos.json first
