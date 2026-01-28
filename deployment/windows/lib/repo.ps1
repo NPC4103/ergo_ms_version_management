@@ -486,7 +486,7 @@ function Get-CommitType {
     $type = $Matches[1]
     if ($commitTypes -contains $type) {
       Write-Host "[INFO] Обнаружен тип коммита в сообщении: $type" -ForegroundColor Gray
-      return $type
+      return $Message
     }
   }
   
@@ -557,28 +557,28 @@ function Get-CommitType {
   
   # Определяем тип по приоритету
   if ($hasFixFiles) {
-    return "fix"
+    return "fix: $Message"
   }
   elseif ($hasTestFiles) {
-    return "test"
+    return "test: $Message"
   }
   elseif ($hasFeatureFiles) {
-    return "feat"
+    return "feat: $Message"
   }
   elseif ($hasDocsFiles) {
-    return "docs"
+    return "docs: $Message"
   }
   elseif ($hasStyleFiles) {
-    return "style"
+    return "style: $Message"
   }
   elseif ($hasBuildFiles) {
-    return "build"
+    return "build: $Message"
   }
   elseif ($hasRefactorFiles) {
-    return "refactor"
+    return "refactor: $Message"
   }
   else {
-    return "chore"
+    return "chore: $Message"
   }
 }
 
