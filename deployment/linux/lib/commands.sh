@@ -510,11 +510,11 @@ cmd_commit() {
   done
   
   local repo_root
-  repo_root="$(find_repository_root)"
+  repo_root="$(find_local_repository_root)"
   [[ -z "$repo_root" ]] && echo "[ERROR] Не удалось найти репозиторий." >&2 && exit 1
   
   local uuid
-  uuid="$(get_current_repository_uuid)"
+  uuid="$(get_current_repository_uuid "$repo_root")"
   [[ -z "$uuid" ]] && echo "[ERROR] Не удалось определить UUID репозитория." >&2 && exit 1
   
   local staging_file="$repo_root/.ergovcs/staging.json"
@@ -535,11 +535,16 @@ cmd_commit() {
     [[ -z "$message" ]] && echo "[ERROR] Сообщение коммита не может быть пустым." >&2 && exit 1
   fi
   
-  local files_json files_for_api commit_type
-  files_json="$(echo "$staging_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get('files',[])))")"
-  commit_type="$(get_commit_type "$files_json" "$message")"
-  message="$commit_type $message"
+  # Используем функцию определения типа коммита (аналогично Windows)
+  echo "[INFO] Определение типа коммита..." >&2
+  local files_for_detection
+  files_for_detection="$(echo "$staging_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get('files',[])))" 2>/dev/null)"
   
+  message="$(get_commit_type "$message" "$files_for_detection")"
+  
+  echo "[INFO] Тип коммита определен: $(echo "$message" | cut -d: -f1)" >&2
+  
+  local files_for_api
   files_for_api="$(echo "$staging_json" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)

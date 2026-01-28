@@ -441,67 +441,111 @@ except:
   echo '{"source": "empty", "structure": []}'
 }
 
-# Определить тип коммита на основе изменений и сообщения (аналог Get-CommitType в Windows)
-#   $1 — JSON с файлами staging (массив объектов с path, action)
-#   $2 — сообщение коммита
-#   stdout — тип: feat, fix, docs, style, refactor, test, chore, build
+# Автоматическое определение типа на основе изменений
 get_commit_type() {
-  local files_json="$1"
-  local message="$2"
-  echo "$files_json" | ERGOVCS_COMMIT_MSG="$message" python3 -c "
-import json, sys, re, os
+  local message="$1"
+  local files_json="$2"
+  
+  # Проверяем, указан ли тип в сообщении (формат Conventional Commits)
+  if [[ "$message" =~ ^([a-zA-Z]+)(\([^)]+\))?: ]]; then
+    local commit_type="${BASH_REMATCH[1]}"
+    local commit_types=("feat" "fix" "docs" "style" "refactor" "test" "chore" "perf" "ci" "build" "revert")
+    
+    for type in "${commit_types[@]}"; do
+      if [[ "$commit_type" == "$type" ]]; then
+        echo "$message"
+        return 0
+      fi
+    done
+  fi
+  
+  # Автоматическое определение типа на основе изменений
+  echo "[INFO] Автоматическое определение типа коммита..." >&2
+  
+  # Используем Python для анализа файлов (поскольку bash неудобен для JSON)
+  local new_message
+  new_message=$(echo "$files_json" | python3 -c "
+import json, sys, re
 
-msg = os.environ.get('ERGOVCS_COMMIT_MSG', '')
-commit_types = ['feat', 'fix', 'docs', 'style', 'refactor', 'test', 'chore', 'perf', 'ci', 'build', 'revert']
+message = '''$message'''
+message_lower = message.lower()
 
-# Тип из сообщения (Conventional Commits: type(scope): или type:)
-m = re.match(r'^(\w+)(?:\([^)]+\))?:', msg)
-if m:
-    t = m.group(1)
-    if t in commit_types:
-        print('[INFO] Обнаружен тип коммита в сообщении: {}'.format(t), file=sys.stderr)
-        print(t)
-        sys.exit(0)
+# Инициализируем флаги
+has_build_files = False
+has_source_files = False
+has_docs_files = False
+has_style_files = False
+has_test_files = False
+has_refactor_files = False
+has_fix_files = False
+has_feature_files = False
 
-print('[INFO] Автоматическое определение типа коммита...', file=sys.stderr)
-
-has_fix = has_feat = has_refactor = has_test = has_docs = has_style = has_build = False
-ml = msg.lower()
-if re.search(r'fix|bug|error|issue', ml): has_fix = True
-if re.search(r'feat|feature|add|new', ml): has_feat = True
-if re.search(r'refactor|restructure|cleanup', ml): has_refactor = True
-if re.search(r'test|spec|unit|integration', ml): has_test = True
-if re.search(r'doc|readme|comment', ml): has_docs = True
+# Анализируем ключевые слова в сообщении
+if any(word in message_lower for word in ['fix', 'bug', 'error', 'issue']):
+    has_fix_files = True
+if any(word in message_lower for word in ['feat', 'feature', 'add', 'new']):
+    has_feature_files = True
+if any(word in message_lower for word in ['refactor', 'restructure', 'cleanup']):
+    has_refactor_files = True
+if any(word in message_lower for word in ['test', 'spec', 'unit', 'integration']):
+    has_test_files = True
+if any(word in message_lower for word in ['doc', 'readme', 'comment']):
+    has_docs_files = True
 
 try:
-    files = json.load(sys.stdin)
-except Exception:
-    files = []
+    files = json.loads(sys.stdin.read())
+    
+    # Анализируем файлы
+    for file in files:
+        path = file.get('path', '').lower()
+        action = file.get('action', '')
+        
+        # Проверяем файлы сборки
+        if re.search(r'(package\.json|pom\.xml|build\.gradle|build\.xml|cmakelists\.txt|makefile|dockerfile|\.yml$|\.yaml$|\.json$|\.config$|\.ini$)', path):
+            has_build_files = True
+        
+        # Проверяем исходные файлы
+        if re.search(r'(\.py$|\.js$|\.ts$|\.java$|\.cpp$|\.cs$|\.php$|\.rb$|\.go$|\.rs$|\.swift$|\.kt$|\.scala$)', path):
+            if action == 'created':
+                has_feature_files = True
+            if action == 'updated':
+                has_refactor_files = True
+        
+        # Проверяем документацию
+        if re.search(r'(readme\.md|readme\.txt|\.md$|\.rst$|docs?\/|\.txt$)', path):
+            has_docs_files = True
+        
+        # Проверяем стили
+        if re.search(r'(\.css$|\.scss$|\.less$|\.sass$|\.styl$|\.html$|\.vue$|\.jsx$|\.tsx$)', path):
+            has_style_files = True
+        
+        # Проверяем тесты
+        if re.search(r'(test|spec|__tests__|__spec__|\.test\.|\.spec\.)', path):
+            has_test_files = True
 
-for f in files:
-    path = (f.get('path') or '').lower()
-    action = (f.get('action') or '')
-    if re.search(r'package\.json|pom\.xml|build\.gradle|build\.xml|cmakelists\.txt|makefile|dockerfile|\.yml$|\.yaml$|\.json$|\.config$|\.ini$', path):
-        has_build = True
-    if re.search(r'\.py$|\.js$|\.ts$|\.java$|\.cpp$|\.cs$|\.php$|\.rb$|\.go$|\.rs$|\.swift$|\.kt$|\.scala$', path):
-        if action == 'created': has_feat = True
-        if action == 'updated': has_refactor = True
-    if re.search(r'readme\.md|readme\.txt|\.md$|\.rst$|docs?/|\.txt$', path):
-        has_docs = True
-    if re.search(r'\.css$|\.scss$|\.less$|\.sass$|\.styl$|\.html$|\.vue$|\.jsx$|\.tsx$', path):
-        has_style = True
-    if re.search(r'test|spec|__tests__|__spec__|\.test\.|\.spec\.', path):
-        has_test = True
+except Exception as e:
+    print(f'[DEBUG] Ошибка анализа файлов: {e}', file=sys.stderr)
 
-if has_fix: print('fix')
-elif has_test: print('test')
-elif has_feat: print('feat')
-elif has_docs: print('docs')
-elif has_style: print('style')
-elif has_build: print('build')
-elif has_refactor: print('refactor')
-else: print('chore')
-" 2>/dev/stderr
+# Определяем тип по приоритету
+if has_fix_files:
+    print(f'fix: {message}')
+elif has_test_files:
+    print(f'test: {message}')
+elif has_feature_files:
+    print(f'feat: {message}')
+elif has_docs_files:
+    print(f'docs: {message}')
+elif has_style_files:
+    print(f'style: {message}')
+elif has_build_files:
+    print(f'build: {message}')
+elif has_refactor_files:
+    print(f'refactor: {message}')
+else:
+    print(f'chore: {message}')
+")
+  
+  echo "$new_message"
 }
 
 # Получить текущую ветку из конфига (как в Windows: локальный .ergovcs/repos.json, затем ~/.ergovcs/repos.json)

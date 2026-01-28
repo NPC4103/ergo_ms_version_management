@@ -487,8 +487,13 @@ function Get-CommitType {
   if ($Message -match '^(\w+)(?:\([^)]+\))?:') {
     $type = $Matches[1]
     if ($commitTypes -contains $type) {
+<<<<<<< HEAD
       Write-Host "[INFO] Commit type detected in message: $type" -ForegroundColor Gray
       return $type
+=======
+      Write-Host "[INFO] Обнаружен тип коммита в сообщении: $type" -ForegroundColor Gray
+      return $Message
+>>>>>>> 6fdb98896db416513eef6b7b9100081a1994e892
     }
   }
   
@@ -559,28 +564,28 @@ function Get-CommitType {
   
   # Determine type by priority
   if ($hasFixFiles) {
-    return "fix"
+    return "fix: $Message"
   }
   elseif ($hasTestFiles) {
-    return "test"
+    return "test: $Message"
   }
   elseif ($hasFeatureFiles) {
-    return "feat"
+    return "feat: $Message"
   }
   elseif ($hasDocsFiles) {
-    return "docs"
+    return "docs: $Message"
   }
   elseif ($hasStyleFiles) {
-    return "style"
+    return "style: $Message"
   }
   elseif ($hasBuildFiles) {
-    return "build"
+    return "build: $Message"
   }
   elseif ($hasRefactorFiles) {
-    return "refactor"
+    return "refactor: $Message"
   }
   else {
-    return "chore"
+    return "chore: $Message"
   }
 }
 
