@@ -421,7 +421,7 @@ function Import-FromSource {
 }
 
 # ============================================================================
-# Функции для работы с содержимым проекта
+# Функции для работы с содержимым проекта и коммитами
 # ============================================================================
 
 # Получить содержимое проекта (из API или backup.json)
@@ -468,6 +468,117 @@ function Get-ProjectContent {
   return @{
     source = "empty"
     structure = @()
+  }
+}
+
+# Определить тип коммита на основе изменений и сообщения
+function Get-CommitType {
+  param(
+    [array]$Files,
+    [string]$Message
+  )
+  
+  # Проверяем, указан ли тип в сообщении (формат Conventional Commits)
+  $commitTypes = @("feat", "fix", "docs", "style", "refactor", "test", "chore", "perf", "ci", "build", "revert")
+  
+  # Проверяем, начинается ли сообщение с типа коммита
+  if ($Message -match '^(\w+)(?:\([^)]+\))?:') {
+    $type = $Matches[1]
+    if ($commitTypes -contains $type) {
+      Write-Host "[INFO] Обнаружен тип коммита в сообщении: $type" -ForegroundColor Gray
+      return $type
+    }
+  }
+  
+  # Автоматическое определение типа на основе изменений
+  Write-Host "[INFO] Автоматическое определение типа коммита..." -ForegroundColor Gray
+  
+  $hasBuildFiles = $false
+  $hasSourceFiles = $false
+  $hasDocsFiles = $false
+  $hasStyleFiles = $false
+  $hasTestFiles = $false
+  $hasRefactorFiles = $false
+  $hasFixFiles = $false
+  $hasFeatureFiles = $false
+  
+  # Анализируем ключевые слова в сообщении
+  $messageLower = $Message.ToLower()
+  if ($messageLower -match "fix|bug|error|issue") {
+    $hasFixFiles = $true
+  }
+  if ($messageLower -match "feat|feature|add|new") {
+    $hasFeatureFiles = $true
+  }
+  if ($messageLower -match "refactor|restructure|cleanup") {
+    $hasRefactorFiles = $true
+  }
+  if ($messageLower -match "test|spec|unit|integration") {
+    $hasTestFiles = $true
+  }
+  if ($messageLower -match "doc|readme|comment") {
+    $hasDocsFiles = $true
+  }
+  
+  # Анализируем файлы
+  foreach ($file in $Files) {
+    $path = $file.path.ToLower()
+    
+    # Проверяем файлы сборки
+    if ($path -match '(package\.json|pom\.xml|build\.gradle|build\.xml|cmakelists\.txt|makefile|dockerfile|\.yml$|\.yaml$|\.json$|\.config$|\.ini$)') {
+      $hasBuildFiles = $true
+    }
+    
+    # Проверяем исходные файлы
+    if ($path -match '(\.py$|\.js$|\.ts$|\.java$|\.cpp$|\.cs$|\.php$|\.rb$|\.go$|\.rs$|\.swift$|\.kt$|\.scala$)') {
+      if ($file.action -eq "created") {
+        $hasFeatureFiles = $true
+      }
+      if ($file.action -eq "updated") {
+        $hasRefactorFiles = $true
+      }
+    }
+    
+    # Проверяем документацию
+    if ($path -match '(readme\.md|readme\.txt|\.md$|\.rst$|docs?\/|\.txt$)') {
+      $hasDocsFiles = $true
+    }
+    
+    # Проверяем стили
+    if ($path -match '(\.css$|\.scss$|\.less$|\.sass$|\.styl$|\.html$|\.vue$|\.jsx$|\.tsx$)') {
+      $hasStyleFiles = $true
+    }
+    
+    # Проверяем тесты
+    if ($path -match '(test|spec|__tests__|__spec__|\.test\.|\.spec\.)') {
+      $hasTestFiles = $true
+    }
+  }
+  
+  # Определяем тип по приоритету
+  if ($hasFixFiles) {
+    return "fix"
+  }
+  elseif ($hasTestFiles) {
+    return "test"
+  }
+  elseif ($hasFeatureFiles) {
+    return "feat"
+  }
+  elseif ($hasDocsFiles) {
+    return "docs"
+  }
+  elseif ($hasStyleFiles) {
+    return "style"
+  }
+  elseif ($hasBuildFiles) {
+    return "build"
+  }
+  elseif ($hasRefactorFiles) {
+    return "refactor"
+  }
+  else {
+    return "chore"
   }
 }
 

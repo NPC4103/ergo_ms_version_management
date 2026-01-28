@@ -472,6 +472,11 @@ function Invoke-Commit {
     }
   }
   
+  # 5. Определить тип коммита
+  $originalMessage = $message
+  $commitType = Get-CommitType -Files $staging.files -Message $originalMessage
+  $message = "$commitType $message"
+
   $filesForApi = @($staging.files | ForEach-Object {
     @{
       path = $_.path
