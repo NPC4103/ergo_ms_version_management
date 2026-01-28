@@ -540,7 +540,7 @@ cmd_commit() {
   local files_for_detection
   files_for_detection="$(echo "$staging_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get('files',[])))" 2>/dev/null)"
   
-  message="$(determine_commit_type "$message" "$files_for_detection")"
+  message="$(get_commit_type "$message" "$files_for_detection")"
   
   echo "[INFO] Тип коммита определен: $(echo "$message" | cut -d: -f1)" >&2
   

@@ -441,35 +441,8 @@ except:
   echo '{"source": "empty", "structure": []}'
 }
 
-# Получить текущую ветку из конфига (как в Windows: локальный .ergovcs/repos.json, затем ~/.ergovcs/repos.json)
-get_current_branch() {
-  local local_path="$1"
-  local branch=""
-  local f
-
-  for f in "$local_path/.ergovcs/repos.json" "$HOME/.ergovcs/repos.json"; do
-    if [[ -f "$f" ]]; then
-      branch="$(ERGOVCS_REPO_ROOT="$local_path" ERGOVCS_REPOS_FILE="$f" python3 -c "
-import json, os
-r = os.environ.get('ERGOVCS_REPO_ROOT', '')
-p = os.environ.get('ERGOVCS_REPOS_FILE', '')
-try:
-    with open(p) as fp:
-        d = json.load(fp)
-    for k, v in (d.get('repositories') or {}).items():
-        if isinstance(v, dict) and (v.get('local_path') or '') == r:
-            print(v.get('current_branch') or 'main')
-            break
-except Exception:
-    pass
-" 2>/dev/null)"
-      [[ -n "$branch" ]] && echo "$branch" && return 0
-    fi
-  done
-  echo "main"
-}
-
-determine_commit_type() {
+# Автоматическое определение типа на основе изменений
+get_commit_type() {
   local message="$1"
   local files_json="$2"
   
@@ -573,6 +546,34 @@ else:
 ")
   
   echo "$new_message"
+}
+
+# Получить текущую ветку из конфига (как в Windows: локальный .ergovcs/repos.json, затем ~/.ergovcs/repos.json)
+get_current_branch() {
+  local local_path="$1"
+  local branch=""
+  local f
+
+  for f in "$local_path/.ergovcs/repos.json" "$HOME/.ergovcs/repos.json"; do
+    if [[ -f "$f" ]]; then
+      branch="$(ERGOVCS_REPO_ROOT="$local_path" ERGOVCS_REPOS_FILE="$f" python3 -c "
+import json, os
+r = os.environ.get('ERGOVCS_REPO_ROOT', '')
+p = os.environ.get('ERGOVCS_REPOS_FILE', '')
+try:
+    with open(p) as fp:
+        d = json.load(fp)
+    for k, v in (d.get('repositories') or {}).items():
+        if isinstance(v, dict) and (v.get('local_path') or '') == r:
+            print(v.get('current_branch') or 'main')
+            break
+except Exception:
+    pass
+" 2>/dev/null)"
+      [[ -n "$branch" ]] && echo "$branch" && return 0
+    fi
+  done
+  echo "main"
 }
 
 # ============================================================================
