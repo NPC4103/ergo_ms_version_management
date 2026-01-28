@@ -535,7 +535,11 @@ cmd_commit() {
     [[ -z "$message" ]] && echo "[ERROR] Сообщение коммита не может быть пустым." >&2 && exit 1
   fi
   
-  local files_for_api
+  local files_json files_for_api commit_type
+  files_json="$(echo "$staging_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get('files',[])))")"
+  commit_type="$(get_commit_type "$files_json" "$message")"
+  message="$commit_type $message"
+  
   files_for_api="$(echo "$staging_json" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
