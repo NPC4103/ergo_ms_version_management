@@ -62,8 +62,8 @@ find_repository_root() {
 
 # Получить UUID текущего репозитория
 get_current_repository_uuid() {
-  local repo_root
-  repo_root="$(find_repository_root)"
+  local repo_root="$1"
+
   if [[ -z "$repo_root" ]]; then
     return 1
   fi

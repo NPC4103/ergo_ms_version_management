@@ -1,17 +1,17 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Утилита для управления репозиториями version_management
+    Utility for managing version_management repositories
 
 .DESCRIPTION
-    Консольная утилита модуля version_management.
-    Поддерживает команды: clone, add, commit, push, update, remove, create, download.
+    Console utility for version_management module.
+    Supports commands: clone, add, commit, push, update, remove, create, download.
 
 .PARAMETER Command
-    Команда для выполнения (например: create, clone, push, help)
+    Command to execute (e.g.: create, clone, push, help)
 
 .EXAMPLE
-    .\version_manager.ps1 create --name "Мой репозиторий"
+    .\version_manager.ps1 create --name "My repository"
     .\version_manager.ps1 clone <UUID>
 #>
 
@@ -24,14 +24,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# Гарантируем корректный вывод/ввод UTF-8 в консоли (актуально для кириллицы в PowerShell)
+# Ensure correct UTF-8 input/output in console
 try {
   $utf8 = [System.Text.UTF8Encoding]::new($false)
   [Console]::InputEncoding = $utf8
   [Console]::OutputEncoding = $utf8
   $OutputEncoding = $utf8
 } catch {
-  # ignore: не критично, если не удалось выставить кодировку
+  # ignore: not critical if encoding setup failed
 }
 
 # Load modules
@@ -62,4 +62,3 @@ switch ($Command.ToLower()) {
   "help"     { Show-Help }
   default    { Write-Host "[ERROR] Unknown command: $Command" -ForegroundColor Red; Show-Help; exit 1 }
 }
-

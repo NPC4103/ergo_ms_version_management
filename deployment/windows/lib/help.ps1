@@ -1,89 +1,89 @@
-# Справка по использованию утилиты
+# Help for CLI utility
 
 function Show-Help {
   @"
 ergovcs <command> [options]
 
-Основные команды работы с репозиториями:
+Main repository commands:
   clone <UUID>
-    Клонировать репозиторий из media/version_management/<UUID>/ на локальный компьютер
-    Вызывает API: /api/repositories/{id}/clone/
+    Clone repository from media/version_management/<UUID>/ to local computer
+    Calls API: /api/repositories/{id}/clone/
     
-  add <файл.расширение>
-    Добавить файл для коммита в staging area
-    После команды commit изменения будут отправлены на сервер
+  add <file.extension>
+    Add file for commit to staging area
+    After commit command changes will be sent to server
     
-  commit -m "Сообщение"
-    Создать коммит с изменениями
-    Вызывает API: /api/repositories/{id}/commits/create/
-    После повторного add не создаётся новый коммит, а добавляются изменения
-    в существующий, до тех пор пока коммит не отправлен на сервер
+  commit -m "Message"
+    Create commit with changes
+    Calls API: /api/repositories/{id}/commits/create/
+    After repeated add no new commit is created, changes are added
+    to existing one, until commit is pushed to server
     
-  push <ветка>
-    Отправить изменения на сервер в папку media/version_management/<UUID>/
-    Вызывает API: /api/repositories/{id}/push/
+  push <branch>
+    Push changes to server to folder media/version_management/<UUID>/
+    Calls API: /api/repositories/{id}/push/
     
-  update <ветка>
-    Обновить локальный репозиторий, подтянув изменения с сервера
-    Вызывает API: /api/repositories/{id}/update/
-    Примечание: не важно какая ветка скачана у пользователя
+  update <branch>
+    Update local repository, pulling changes from server
+    Calls API: /api/repositories/{id}/update/
+    Note: doesn't matter which branch user has downloaded
     
   remove <UUID>
-    Удалить локальную копию репозитория с компьютера пользователя
-    Примечание: удаляет только локальную копию, не репозиторий на сервере
+    Remove local copy of repository from user's computer
+    Note: removes only local copy, not repository on server
 
-Вспомогательные команды:
-  create [--name <имя>] [--description <текст>] [--private] [--read-only] [--branch <ветка>] [--username <u>] [--password <p>] [--root <путь>]
-    Создать новый репозиторий через API и подготовить локальные файлы
+Helper commands:
+  create [--name <name>] [--description <text>] [--private] [--read-only] [--branch <branch>] [--username <u>] [--password <p>] [--root <path>]
+    Create new repository via API and prepare local files
 
-  branch <list|create|delete|set-default> [опции]
-    Управление ветками (через API)
-    Примеры:
+  branch <list|create|delete|set-default> [options]
+    Branch management (via API)
+    Examples:
       ergovcs branch list --repo <uuid>
-      ergovcs branch create --repo <uuid> --name <ветка> --username <u> --password <p>
+      ergovcs branch create --repo <uuid> --name <branch> --username <u> --password <p>
       ergovcs branch delete --id <branch_id>
-      ergovcs branch set-default --repo <uuid> --name <ветка>
+      ergovcs branch set-default --repo <uuid> --name <branch>
 
   files --repo <uuid>
-    Показать дерево файлов репозитория
+    Show repository file tree
     
-  download --source <zip|dir> [--uuid <uuid>] [--name <имя>]
-    Скачать/импортировать репозиторий из zip-архива или папки
+  download --source <zip|dir> [--uuid <uuid>] [--name <name>]
+    Download/import repository from zip-archive or folder
 
-Аналитика и прогнозирование:
+Analytics and forecasting:
   stats [--repo <uuid>] [--json]
-    Получить статистику репозитория (размер, типы файлов, кандидаты для холодного хранилища)
-    Примеры:
+    Get repository statistics (size, file types, cold storage candidates)
+    Examples:
       ergovcs stats --repo <uuid>
       ergovcs stats --json
 
-  forecast [--repo <uuid>] [--days <число>] [--json]
-    Получить прогноз роста репозитория на основе временных рядов
-    Примеры:
+  forecast [--repo <uuid>] [--days <number>] [--json]
+    Get repository growth forecast based on time series
+    Examples:
       ergovcs forecast --repo <uuid>
       ergovcs forecast --days 90
       ergovcs forecast --json
 
   install-cli
-    Установить CLI-обертку в System32 (ergovcs)
+    Install CLI wrapper to System32 (ergovcs)
 
   uninstall-cli
-    Удалить CLI-обертку из System32 (ergovcs)
+    Remove CLI wrapper from System32 (ergovcs)
     
   help
-    Показать эту справку
+    Show this help
 
-Флаги:
-  --root <путь>   указать корень проекта вручную (по умолчанию определяется автоматически)
+Flags:
+  --root <path>   specify project root manually (auto-detected by default)
 
-Примеры:
+Examples:
   ergovcs clone abc-123-def-456
   ergovcs add src\main.py
-  ergovcs commit -m "Добавлен новый функционал"
+  ergovcs commit -m "Added new feature"
   ergovcs push main
   ergovcs update main
   ergovcs remove abc-123-def-456
-  ergovcs create --name "Мой репозиторий"
+  ergovcs create --name "My repository"
   ergovcs download --source "C:\path\to\repo.zip"
   ergovcs files --repo <uuid>
   ergovcs stats --repo <uuid>
@@ -92,4 +92,3 @@ ergovcs <command> [options]
   powershell -ExecutionPolicy Bypass -File .\version_manager.ps1 uninstall-cli
 "@ | Write-Host
 }
-
