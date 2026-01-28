@@ -155,66 +155,6 @@ const getNodeRadius = (d) => {
 // ... DATA GENERATOR ...
 // ... DATA GENERATOR ...
 // ... DATA GENERATOR ...
-const getDemoCommits = () => {
-    const commits = [];
-    const now = Date.now();
-    const genHash = (id) => {
-        const uniquePart = id.toString(16).padStart(8, '0'); 
-        const randomPart = Array(32).fill(0).map((_, i) => ((id + i) % 16).toString(16)).join('');
-        return uniquePart + randomPart;
-    };
-    let currentId = 0xabcdef;
-    
-    // Helper
-    const addCommit = (branch, parents, lane, time, msg, author) => {
-        const hash = genHash(currentId++);
-        const parentHashes = parents ? (Array.isArray(parents) ? parents.map(p => p.hash) : [parents.hash]) : [];
-        
-        const commit = {
-            hash, message: msg, author, id: hash,
-            date: new Date(time).toISOString(), branch, lane,
-            parents: parentHashes,
-            filesChanged: Math.floor(Math.random() * 5) + 1
-        };
-        commits.push(commit);
-        return commit;
-    };
-
-    // --- SCENARIO: Diamond Merge Workflow ---
-    // A -- B -- C -- D -- E   (Ivan on dev)
-    //            \
-    //             F -- G      (Petr on parallel)
-    //                   \
-    //                    M    (Merge)
-
-    let t = now - 100000000;
-    const hour = 3600000;
-
-    // 1. Common History (A, B, C) on 'dev'
-    const A = addCommit('dev', null, 0, t, 'A: Init project', 'Ivan');
-    const B = addCommit('dev', A,    0, t + hour, 'B: Setup libs', 'Ivan');
-    const C = addCommit('dev', B,    0, t + 2*hour, 'C: Core logic', 'Ivan');
-
-    // 2. Ivan continues on 'dev' (D, E)
-    // Pushed first, so it stays on main line (Lane 0)
-    const D = addCommit('dev', C, 0, t + 3*hour, 'D: feat: Add function 1', 'Ivan');
-    const E = addCommit('dev', D, 0, t + 4*hour, 'E: chore: Update libs', 'Ivan');
-
-    // 3. Petr works in parallel (F, G)
-    // Diverged from C. Branch 'dev-petr' (Lane 1) - simulates Petr's local dev copy
-    const F = addCommit('dev-petr', C, 1, t + 3.5*hour, 'F: docs: Update docs', 'Petr');
-    const G = addCommit('dev-petr', F, 1, t + 4.5*hour, 'G: feat: Add function 2', 'Petr');
-
-    // 4. Merge (M)
-    // Merges Petr's work (G) into Ivan's work (E)
-    // Result is on 'dev' (Lane 0)
-    const M = addCommit('dev', [E, G], 0, t + 6*hour, "M: Merge branch 'feature-petr'", 'Petr');
-
-    return commits.sort((a,b) => new Date(b.date) - new Date(a.date));
-};
-// ... END DATA GENERATOR ...
-
-
 // Filter commits based on selected branch
 const filteredCommits = computed(() => {
     const target = currentBranch.value;
@@ -224,11 +164,6 @@ const filteredCommits = computed(() => {
     
     // Strict Main View
     if (target === 'main') return commits.value.filter(c => c.branch === 'main');
-    
-    // Smart Dev View (Show Dev + Petr's work)
-    if (target === 'dev') {
-        return commits.value.filter(c => c.branch === 'dev' || c.branch === 'dev-petr');
-    }
     
     // Fallback for any other specific branch
     return commits.value.filter(c => c.branch === target);
@@ -240,31 +175,64 @@ const loadCommits = async () => {
     debugError.value = '';
     
     try {
-        console.log('Loading commits...');
-        const response = await apiClient.get(versionManagementEndpoints.repositories.commitsList(repoId));
-        let data = [];
-        if (response.success && response.data) {
-             data = Array.isArray(response.data) ? response.data : (response.data.results || []);
+        console.log('Loading commits via Vite glob import...');
+        // Use glob import to find the file dynamically
+        // Path relative from modules/version_management/client/components/CommitGraph.vue
+        // to ergo_ms_core/media/ is 4 levels up.
+        // We look for 'commit.json' because that's what is on disk (even though it contains a list).
+        const commitsFiles = import.meta.glob('../../../../media/version_management/*/branches/commit.json');
+        
+        console.log('Available glob keys:', Object.keys(commitsFiles));
+
+        // Construct the expected path key
+        const targetPathSuffix = `/version_management/${repoId}/branches/commit.json`;
+        console.log('Looking for suffix:', targetPathSuffix);
+        
+        let loader = null;
+        for (const path in commitsFiles) {
+            if (path.includes(targetPathSuffix)) {
+                loader = commitsFiles[path];
+                console.log('Found commit file:', path);
+                break;
+            }
+        }
+        
+        if (!loader) {
+            console.warn('Commit file not found via glob. Checked keys:', Object.keys(commitsFiles));
+            throw new Error('Commits file (commit.json) not found');
+        }
+        
+        const mod = await loader();
+        let data = mod.default || mod; // JSON module default export
+
+        
+        // Ensure data is array
+        if (!Array.isArray(data)) {
+             data = [];
         }
         
         if (data.length === 0) {
-            console.log('No real commits, loading demo...');
-            data = getDemoCommits();
+            console.log('No real commits found.');
         }
         
-        // Prepare nodes
-        commits.value = data.map(c => ({
+        // Prepare nodes initial map
+        let rawNodes = data.map(c => ({
              ...c,
              id: c.hash || c.id, 
              shortHash: (c.hash||'').substring(0,7),
-             branchColor: getBranchInfo(c.branch).color,
-             branchType: getBranchInfo(c.branch).type
+             // Ensure branch is present
+             branch: c.branch || 'main',
+             parents: c.parents || []
         }));
+
+        // Calculate Lanes Topology (Git Graph Algorithm)
+        calculateGraphLanes(rawNodes);
+
+        commits.value = rawNodes;
         
         // Update branches list for dropdown
         const uniqueBranches = new Set(commits.value.map(c => c.branch));
-        // Filter out helper branches (like dev-petr) from the UI dropdown
-        const distinctBranches = Array.from(uniqueBranches).filter(b => !b.includes('petr'));
+        const distinctBranches = Array.from(uniqueBranches).filter(b => b);
         branches.value = ['all', ...distinctBranches];
         if (!currentBranch.value) currentBranch.value = 'all';
         
@@ -276,38 +244,84 @@ const loadCommits = async () => {
     } catch (e) {
         console.error('Error loading:', e);
         debugError.value = 'Data Load Error: ' + e.message;
-        // Fallback
-        commits.value = getDemoCommits().map(c => ({
-             ...c, id: c.hash, shortHash: c.hash.substring(0,7),
-             branchColor: getBranchInfo(c.branch).color,
-             branchType: getBranchInfo(c.branch).type
-        }));
+        commits.value = [];
     } finally {
-        // Critical: Set loading to false so v-else renders the container
         loading.value = false;
-        // Wait for Vue to update DOM
         await nextTick();
-        // Give a small buffer for heavy rendering
         setTimeout(initD3Graph, 50);
     }
 };
+
+// --- Lane Calculation Algorithm ---
+const calculateGraphLanes = (nodes) => {
+    // 1. Sort by date desc (newest first)
+    nodes.sort((a, b) => new Date(b.created_at || b.date) - new Date(a.created_at || a.date));
+
+    const lanes = []; 
+    // Vivid Palette (VS Code Git Graph style)
+    const colorPalette = ['#0098d4', '#e36049', '#92a084', '#f0b538', '#97b882', '#6b3a6b', '#1eaaf1', '#ff4081', '#17a2b8', '#fd7e14'];
+
+    nodes.forEach(node => {
+        let assignedLane = -1;
+        const convergingLanes = [];
+        for (let i = 0; i < lanes.length; i++) {
+            if (lanes[i] === node.id) {
+                convergingLanes.push(i);
+            }
+        }
+
+        if (convergingLanes.length > 0) {
+            assignedLane = convergingLanes[0];
+            for (let k = 1; k < convergingLanes.length; k++) {
+                lanes[convergingLanes[k]] = null;
+            }
+        } else {
+            assignedLane = lanes.findIndex(L => L === null);
+            if (assignedLane === -1) assignedLane = lanes.length;
+        }
+
+        node.lane = assignedLane;
+        
+        if (node.parents && node.parents.length > 0) {
+            const primaryParent = node.parents[0];
+            lanes[assignedLane] = primaryParent;
+            
+            for (let p = 1; p < node.parents.length; p++) {
+                const parentHash = node.parents[p];
+                if (lanes.includes(parentHash)) continue;
+                
+                let freeSlot = lanes.findIndex(L => L === null);
+                if (freeSlot === -1) {
+                    lanes.push(parentHash);
+                } else {
+                    lanes[freeSlot] = parentHash;
+                }
+            }
+        } else {
+            lanes[assignedLane] = null;
+        }
+        
+        node.branchColor = colorPalette[assignedLane % colorPalette.length];
+    });
+};
+
 
 const initD3Graph = () => {
     if (!filteredCommits.value.length) return;
     
     // Safety check with retry
     if (!svgElement.value || !graphContainer.value) {
-        console.warn('DOM not ready, retrying...');
         setTimeout(initD3Graph, 100);
         return;
     }
     
-    // reset error if we got here
     debugError.value = '';
 
     try {
         const width = graphContainer.value.clientWidth || 800;
-        const height = graphContainer.value.clientHeight || 800;
+        // Calc height based on nodes count
+        const calculatedHeight = filteredCommits.value.length * Y_SPACING + 200;
+        const height = Math.max(graphContainer.value.clientHeight || 800, calculatedHeight);
         
         d3.select(svgElement.value).selectAll('*').remove();
         svg = d3.select(svgElement.value).attr('width', width).attr('height', height);
@@ -317,14 +331,17 @@ const initD3Graph = () => {
         svg.call(zoom);
         
         const nodes = JSON.parse(JSON.stringify(filteredCommits.value));
-        // Calculate initial positions
-        nodes.forEach((n, i) => {
-            n.x = (n.lane || 0) * LANE_WIDTH + 150;
-            n.y = i * Y_SPACING + 100;
-        });
         
-        const links = [];
+        // --- STATIC LAYOUT ---
+        // 1. Assign fixed coordinates
+        nodes.forEach((d, i) => {
+            d.x = 40 + (d.lane || 0) * 32; 
+            d.y = 60 + i * Y_SPACING;
+        });
+
         const nodeMap = new Map(nodes.map(n => [n.id, n]));
+        const links = [];
+        
         nodes.forEach(n => {
             if(n.parents) n.parents.forEach(p => {
                 if(nodeMap.has(p)) links.push({ source: n.id, target: p, color: n.branchColor });
@@ -332,50 +349,55 @@ const initD3Graph = () => {
         });
         
         calculateAllMetrics(nodes, links);
-        console.log('Metrics calculated. Sample node metrics:', nodes[0]?.metrics, 'Total nodes:', nodes.length);
-        
-        // --- STATIC LAYOUT (No Force Simulation) ---
-        // 1. Assign fixed coordinates
-        nodes.forEach((d, i) => {
-            d.x = 100 + (d.lane || 0) * LANE_WIDTH;
-            d.y = 80 + i * Y_SPACING;
+        // Normalize metrics to radius (e.g., 6 to 12)
+        const maxImpact = Math.max(...nodes.map(n => n.metrics?.impact || 0), 10);
+        nodes.forEach(n => {
+             const impact = n.metrics?.impact || 0;
+             // Scale radius: Base 6 + up to 6 based on impact relative to max
+             n.r = 6 + (impact / maxImpact) * 6; 
         });
 
-        // 2. Resolve link references manually since we don't have forceLink doing it
         const resolvedLinks = links.map(l => {
             const sourceNode = nodeMap.get(l.source);
             const targetNode = nodeMap.get(l.target);
-            if (!sourceNode || !targetNode) return null;
-            return {
-                ...l,
-                source: sourceNode,
-                target: targetNode
-            };
+            return (sourceNode && targetNode) ? { ...l, source: sourceNode, target: targetNode } : null;
         }).filter(l => l !== null);
 
-        // 3. Render Links (Static)
-        linksGroup = g.append('g').selectAll('path')
+        // 3. Render Links with Smooth Git-Graph Curves
+        g.append('g').selectAll('path')
             .data(resolvedLinks).enter().append('path')
             .attr('d', d => {
                  const sx = d.source.x;
                  const sy = d.source.y;
                  const tx = d.target.x;
                  const ty = d.target.y;
-                 // S-curve for vertical layout
-                 return `M ${sx} ${sy} C ${sx} ${sy + Y_SPACING/2}, ${tx} ${ty - Y_SPACING/2}, ${tx} ${ty}`;
+                 
+                 // If same lane, straight line
+                 if (Math.abs(sx - tx) < 1) {
+                     return `M ${sx} ${sy} L ${tx} ${ty}`;
+                 }
+                 
+                 // Smooth Curve for Branching/Merging
+                 // Standard Vertical Bezier (S-curve)
+                 // Control Point 1: sy + (ty-sy)/2
+                 // Control Point 2: ty - (ty-sy)/2
+                 // This ensures the curve bends in the middle regardless of vertical distance.
+                 
+                 const midY = (sy + ty) / 2;
+                 return `M ${sx} ${sy} C ${sx} ${midY}, ${tx} ${midY}, ${tx} ${ty}`;
             })
             .attr('stroke', d => d.color)
-            .attr('stroke-width', 2)
+            .attr('stroke-width', 2) // Thicker links
             .attr('fill', 'none')
-            .attr('opacity', 0.6);
+            .attr('opacity', 0.8)
+            .attr('stroke-linecap', 'round');
             
-        // 4. Render Nodes (Static - No Drag)
+        // 4. Render Nodes
         nodesGroup = g.append('g').selectAll('g')
             .data(nodes).enter().append('g')
             .attr('transform', d => `translate(${d.x}, ${d.y})`) 
             .attr('class', 'node-group')
             .on('mouseover', function(e, d) {
-                // Target the shape (circle or polygon)
                 d3.select(this).select('.node-shape').classed('node-hovered', true);
                 showTooltip(d, e);
             })
@@ -385,43 +407,49 @@ const initD3Graph = () => {
             })
             .on('click', (event, d) => router.push({ name: 'CommitDetail', params: { id: repoId, hash: d.hash } }));
             
-        // Use 'each' to handle different shapes based on data
         nodesGroup.each(function(d) {
             const el = d3.select(this);
-            const r = getNodeRadius(d);
+            const r = d.r || 6; 
             const isMerge = d.parents && d.parents.length > 1;
             
+            // Halo
+            el.append('circle')
+                .attr('r', r + 3)
+                .attr('fill', '#18181a') // Match new background
+                .attr('stroke', 'none');
+
             if (isMerge) {
-                // Render Octagon (Solid filled - same color as branch)
+                // RESTORED: Octagon for Merges
                 const points = [];
                 for(let i = 0; i < 8; i++) {
+                     // Rotated slightly for aesthetics
                     const angle = (i * 45 + 22.5) * (Math.PI / 180); 
                     points.push([r * Math.cos(angle), r * Math.sin(angle)]);
                 }
                 el.append('polygon')
                     .attr('points', points.map(p => p.join(',')).join(' '))
-                    .attr('fill', d.branchColor) // Solid fill with branch color
-                    .attr('stroke', 'none')
+                    .attr('fill', d.branchColor)
+                    .attr('stroke', '#fff')
+                    .attr('stroke-width', 1)
                     .attr('class', 'node-shape');
             } else {
-                // Render Circle (Filled, no white stroke)
+                // Circle for standard commits
                 el.append('circle')
                     .attr('r', r)
                     .attr('fill', d.branchColor)
-                    .attr('stroke', 'none') // No white border
+                    .attr('stroke', '#fff') 
+                    .attr('stroke-width', 1)
                     .attr('class', 'node-shape');
             }
         });
             
         nodesGroup.append('text')
-            .text(d => d.shortHash)
-            .attr('dx', 18)
+            .text(d => d.subject || d.message.split('\n')[0].substring(0, 50))
+            .attr('dx', d => (d.r || 6) + 12)
             .attr('dy', 4)
-            .attr('fill', '#999')
-            .style('font-family', 'monospace')
-            .style('font-size', '11px');
-            
-        // No simulation.on('tick') needed!
+            .attr('fill', '#e1e1e1')
+            .attr('font-size', '12px')
+            .style('font-family', 'monospace');
         
         // Center View
         const initialTransform = d3.zoomIdentity.translate(50, 50).scale(1);
@@ -441,7 +469,7 @@ const resetSimulation = () => simulation && simulation.alpha(1).restart();
 const centerGraph = () => svg && svg.transition().duration(750).call(zoom.transform, d3.zoomIdentity.translate(width/2 - 200, 50).scale(1.2));
 const showTooltip = (d, e) => { tooltipData.value = d; tooltipPosition.value = { x: e.clientX+15, y: e.clientY-10 }; };
 const hideTooltip = () => tooltipData.value = null;
-const formatMetric = v => v ? (v*100).toFixed(1)+'%' : '-';
+const formatMetric = v => v !== undefined && v !== null ? Number(v).toFixed(2) : '-';
 const formatDate = d => new Date(d).toLocaleDateString();
 
 const updateNodeVisuals = () => {
