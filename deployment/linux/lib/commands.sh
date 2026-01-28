@@ -510,7 +510,7 @@ cmd_commit() {
   done
   
   local repo_root
-  repo_root="$(find_local_repository_root)"
+  repo_root="$(find_repository_root)"
   [[ -z "$repo_root" ]] && echo "[ERROR] Не удалось найти репозиторий." >&2 && exit 1
   
   local uuid

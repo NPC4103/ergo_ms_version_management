@@ -44,7 +44,7 @@ cli_path() {
 # ============================================================================
 
 # Найти корень репозитория (ищет .ergovcs/staging.json или .ergovcs/config.json вверх по дереву)
-find_local_repository_root() {
+find_repository_root() {
   local start="$(pwd)"
   while [[ "$start" != "/" ]]; do
     local ergovcs_dir="$start/.ergovcs"
@@ -63,7 +63,7 @@ find_local_repository_root() {
 # Получить UUID текущего репозитория
 get_current_repository_uuid() {
   local repo_root="$1"
-  
+
   if [[ -z "$repo_root" ]]; then
     return 1
   fi
