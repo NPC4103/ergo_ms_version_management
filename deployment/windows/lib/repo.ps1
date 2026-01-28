@@ -487,13 +487,8 @@ function Get-CommitType {
   if ($Message -match '^(\w+)(?:\([^)]+\))?:') {
     $type = $Matches[1]
     if ($commitTypes -contains $type) {
-<<<<<<< HEAD
-      Write-Host "[INFO] Commit type detected in message: $type" -ForegroundColor Gray
-      return $type
-=======
       Write-Host "[INFO] Обнаружен тип коммита в сообщении: $type" -ForegroundColor Gray
       return $Message
->>>>>>> 6fdb98896db416513eef6b7b9100081a1994e892
     }
   }
   
