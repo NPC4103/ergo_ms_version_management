@@ -289,7 +289,7 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                             'files': []
                         }
                         
-                        initial_commit_path = os.path.join(default_branch_path, 'commit.json')
+                        initial_commit_path = os.path.join(branches_path, 'commit.json')
                         with open(initial_commit_path, 'w', encoding='utf-8') as f:
                             json.dump(initial_commit_info, f, indent=2, ensure_ascii=False)
                        
@@ -1028,7 +1028,7 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                 commit_dir_path = os.path.join(commits_path, commit_dir)
                 if not os.path.isdir(commit_dir_path):
                     continue
-                commit_json_path = os.path.join(commit_dir_path, 'commit.json')
+                commit_json_path = os.path.join(branches_path, 'commit.json')
                 if os.path.exists(commit_json_path):
                     try:
                         with open(commit_json_path, 'r', encoding='utf-8') as f:
@@ -1099,7 +1099,7 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                     commit_dir_path = os.path.join(commits_path, commit_dir)
                     if not os.path.isdir(commit_dir_path):
                         continue
-                    commit_json_path = os.path.join(commit_dir_path, 'commit.json')
+                    commit_json_path = os.path.join(branches_path, 'commit.json')
                     if os.path.exists(commit_json_path):
                         try:
                             with open(commit_json_path, 'r', encoding='utf-8') as f:
@@ -1129,7 +1129,7 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                 commit_dir_path = os.path.join(commits_path, commit_dir)
                 if not os.path.isdir(commit_dir_path):
                     continue
-                commit_json_path = os.path.join(commit_dir_path, 'commit.json')
+                commit_json_path = os.path.join(branches_path, 'commit.json')
                 if not os.path.exists(commit_json_path):
                     continue
                 try:
@@ -1772,7 +1772,7 @@ class BranchViewSet(viewsets.ModelViewSet):
                         'files': []
                     }
                         
-                    initial_commit_path = os.path.join(branch_path, 'commit.json')
+                    initial_commit_path = os.path.join(branches_path, 'commit.json')
                     
                     if not os.path.exists(initial_commit_path):
                         with open(initial_commit_path, 'w', encoding='utf-8') as f:
