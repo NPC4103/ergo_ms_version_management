@@ -487,8 +487,8 @@ class RepositoryViewSet(viewsets.ModelViewSet):
         Создать коммит для репозитория.
         POST /api/repositories/{id}/commits/create/
 
-        При повторном вызове не создаётся новый коммит, а добавляются изменения
-        в существующий, до тех пор пока коммит не отправлен на сервер (push).
+        Создает коммит с физическими файлами в папке:
+        media/version_management/<uuid>/branches/<branch_name>/commits/<hash>/
         """
         repository = self.get_object()
         
@@ -538,94 +538,139 @@ class RepositoryViewSet(viewsets.ModelViewSet):
             base_path = os.path.join(MEDIA_ROOT, 'version_management', repo_uuid)
             branches_path = os.path.join(base_path, 'branches')
             branch_path = os.path.join(branches_path, branch.name)
-            pending_commit_path = os.path.join(branch_path, 'pending_commit.json')
+            commits_path = os.path.join(branch_path, 'commits')
 
-            # Проверяем, существует ли незавершенный коммит
-            pending_commit = None
-            if os.path.exists(pending_commit_path):
-                try:
-                    with open(pending_commit_path, 'r', encoding='utf-8') as f:
-                        pending_commit = json.load(f)
-                except (json.JSONDecodeError, IOError) as e:
-                    # Если файл поврежден, создаем новый коммит
-                    print(f"Warning: Не удалось прочитать pending_commit.json: {e}")
-                    pending_commit = None
+            # Создаем структуру папок
+            os.makedirs(commits_path, exist_ok=True)
 
-            # Если есть незавершенный коммит, добавляем изменения в него
-            if pending_commit and not pending_commit.get('pushed', False):
-                # Обновляем существующий коммит
-                existing_files = {f['path']: f for f in pending_commit.get('files', [])}
+            # Генерируем хеш коммита
+            commit_hash = self._generate_commit_hash(repository, branch, message, files)
+            
+            # Создаем папку для коммита
+            commit_dir = os.path.join(commits_path, commit_hash)
+            os.makedirs(commit_dir, exist_ok=True)
 
-                # Добавляем или обновляем файлы
-                for file_data in files:
-                    file_path = file_data.get('path')
-                    if not file_path:
-                        continue
+            # Находим родительский коммит (последний коммит в ветке)
+            parent_hash = self._find_latest_commit_hash(commits_path, commit_hash)
 
-                    # Обновляем или добавляем файл
-                    existing_files[file_path] = {
-                        'path': file_path,
-                        'content': file_data.get('content', ''),
-                        'action': file_data.get('action', 'modified')
-                    }
+            # Подготавливаем список файлов для метаданных
+            commit_files = []
+            
+            # Сохраняем физические файлы на диск
+            for file_data in files:
+                file_path = file_data.get('path')
+                if not file_path:
+                    continue
+                
+                content = file_data.get('content', '')
+                action = file_data.get('action', 'modified')
+                
+                # Полный путь к файлу в папке коммита
+                full_file_path = os.path.join(commit_dir, file_path)
+                
+                # Создаем директории для файла если нужно
+                file_dir = os.path.dirname(full_file_path)
+                if file_dir:
+                    os.makedirs(file_dir, exist_ok=True)
+                
+                # Защита от path traversal
+                if not os.path.abspath(full_file_path).startswith(os.path.abspath(commit_dir)):
+                    print(f"Warning: Попытка записи за пределы папки коммита: {file_path}")
+                    continue
+                
+                # Записываем файл на диск
+                if action != 'deleted':
+                    with open(full_file_path, 'w', encoding='utf-8') as f:
+                        f.write(content)
+                
+                # Добавляем информацию о файле
+                commit_files.append({
+                    'path': file_path,
+                    'action': action,
+                    'size': len(content.encode('utf-8')) if content else 0
+                })
 
-                # Обновляем коммит
-                pending_commit['files'] = list(existing_files.values())
-                pending_commit['updated_at'] = datetime.now().isoformat()
-                pending_commit['message'] = message  # Обновляем сообщение
-                pending_commit['author'] = f"User #{request.user.id}"  # Добавляем автора
+            # Создаем метаданные коммита
+            now = datetime.now()
+            commit_metadata = {
+                'hash': commit_hash,
+                'message': message,
+                'branch': branch.name,
+                'repository_uuid': repo_uuid,
+                'author': f"User #{request.user.id}",
+                'parents': [parent_hash] if parent_hash else [],
+                'files': commit_files,
+                'created_at': now.isoformat(),
+                'updated_at': now.isoformat(),
+                'pushed': True,
+                'pushed_at': now.isoformat()
+            }
 
-                commit_hash = pending_commit.get('hash')
-                is_new_commit = False
-            else:
-                # Создаем новый коммит
-                commit_hash = self._generate_commit_hash(repository, branch, message, files)
-                pending_commit = {
-                    'hash': commit_hash,
-                    'message': message,
-                    'branch': branch.name,
-                    'repository_uuid': repo_uuid,
-                    'author': f"User #{request.user.id}",
-                    'files': [
-                        {
-                            'path': f.get('path'),
-                            'content': f.get('content', ''),
-                            'action': f.get('action', 'modified')
-                        }
-                        for f in files if f.get('path')
-                    ],
-                    'created_at': datetime.now().isoformat(),
-                    'updated_at': datetime.now().isoformat(),
-                    'pushed': False
-                }
-                is_new_commit = True
-
-            # Создаем структуру папок, если нужно
-            os.makedirs(branch_path, exist_ok=True)
-
-            # Сохраняем коммит
-            with open(pending_commit_path, 'w', encoding='utf-8') as f:
-                json.dump(pending_commit, f, indent=2, ensure_ascii=False)
+            # Сохраняем commit.json в папке коммита
+            commit_json_path = os.path.join(commit_dir, 'commit.json')
+            with open(commit_json_path, 'w', encoding='utf-8') as f:
+                json.dump(commit_metadata, f, indent=2, ensure_ascii=False)
 
             return Response({
                 'success': True,
-                'message': 'Коммит создан' if is_new_commit else 'Коммит обновлен',
+                'message': 'Коммит успешно создан',
                 'commit': {
                     'hash': commit_hash,
                     'message': message,
                     'branch': branch.name,
-                    'files_count': len(pending_commit['files']),
-                    'is_new': is_new_commit,
-                    'pushed': False,
-                    'author': pending_commit.get('author')
+                    'files_count': len(commit_files),
+                    'parent': parent_hash,
+                    'author': commit_metadata['author'],
+                    'created_at': commit_metadata['created_at'],
+                    'path': commit_dir
                 }
-            }, status=status.HTTP_201_CREATED if is_new_commit else status.HTTP_200_OK)
+            }, status=status.HTTP_201_CREATED)
 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return Response({
                 'success': False,
                 'error': f'Ошибка при создании коммита: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def _find_latest_commit_hash(self, commits_path, exclude_hash=None):
+        """
+        Находит хеш последнего коммита в папке commits.
+        """
+        if not os.path.exists(commits_path) or not os.path.isdir(commits_path):
+            return None
+        
+        latest_commit = None
+        latest_time = None
+        
+        for commit_dir in os.listdir(commits_path):
+            if commit_dir == exclude_hash or commit_dir == 'initial':
+                continue
+            
+            commit_dir_path = os.path.join(commits_path, commit_dir)
+            if not os.path.isdir(commit_dir_path):
+                continue
+            
+            commit_json_path = os.path.join(commit_dir_path, 'commit.json')
+            if os.path.exists(commit_json_path):
+                try:
+                    with open(commit_json_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    created_at = data.get('created_at', '')
+                    if latest_time is None or created_at > latest_time:
+                        latest_time = created_at
+                        latest_commit = data.get('hash', commit_dir)
+                except (json.JSONDecodeError, IOError):
+                    pass
+            else:
+                # Используем время модификации папки
+                mtime = os.path.getmtime(commit_dir_path)
+                if latest_time is None or mtime > (latest_time if isinstance(latest_time, float) else 0):
+                    latest_time = mtime
+                    latest_commit = commit_dir
+        
+        return latest_commit
 
     @action(detail=True, methods=['get'], url_path='commits')
     def commits_list(self, request, public_id=None):
